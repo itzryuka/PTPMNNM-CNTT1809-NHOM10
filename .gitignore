@@ -1,6 +1,0 @@
-env.local.sh
-.env
-*.log
-.DS_Store
-runtime/
-evidence/private/
