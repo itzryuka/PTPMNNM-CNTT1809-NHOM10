@@ -1,17 +1,17 @@
-# LAB 01 — VẬN HÀNH DỰ ÁN TRÊN LINUX VÀ VIẾT SHELL SCRIPT
+# LAB 04 — QUẢN LÝ BẢN NHÁP BẰNG SESSION VÀ COOKIE
 
 Học phần: Phát triển phần mềm mã nguồn mở. Đối tượng: sinh viên năm 3, chuyên ngành Phát triển phần mềm. Bài thực hành sử dụng mã nguồn CommunityPass được cấp trong thư mục Ma\_nguon.
 
 ## I. MỤC TIÊU VÀ CHUẨN BỊ
 
-Nội dung bài giảng: Chương 2, slide 10–13: Ubuntu; 14–25: Shell, biến, điều kiện, vòng lặp, chuỗi, mảng, hàm. Số trang tính cả trang bìa. Git và kiểm thử được sử dụng để hỗ trợ thực hành.
+Nội dung bài giảng: Chương 3, slide 23–31: Session, Cookie, khởi tạo, đọc, cập nhật và xóa. Số trang tính cả trang bìa. Git và kiểm thử được sử dụng để hỗ trợ thực hành.
 
 Sau khi hoàn thành bài thực hành, sinh viên có khả năng:
 
-- Sử dụng lệnh Linux để xác định đúng thư mục và tệp của dự án.
-- Viết script có biến, hàm, điều kiện và vòng lặp; đọc đúng mã thoát.
-- Kiểm tra công cụ và tệp cần thiết; xử lý trường hợp thiếu điều kiện chạy.
-- Viết và kiểm thử script quét nhiều tệp PHP, tổng hợp kết quả và trả đúng mã thoát.
+- Phân biệt dữ liệu Session ở phía máy chủ và tùy chọn Cookie phía trình duyệt.
+- Xây luồng nhập, xác nhận, sửa, hủy và hoàn tất mô phỏng.
+- Kiểm tra nháp vắng mặt, hết hạn và hai phiên độc lập.
+- Hoàn thiện kiểm tra bản nháp, thời hạn và các thao tác sửa, hủy, xác nhận trong một phiên sử dụng.
 
 Chuẩn bị: đọc nội dung bài giảng được nêu trên, giải nén trọn thư mục của lab và mở Ma\_nguon trong trình soạn thảo. Bài đã có đủ mã và dữ liệu khởi đầu; chỉ sửa những tệp được chỉ rõ trong phần hướng dẫn và bài tự làm.
 
@@ -30,32 +30,30 @@ Các lệnh Bash chạy trong terminal Ubuntu, không chạy trong PowerShell. B
 
 ### Bối cảnh và nội dung thực hành
 
-CommunityPass là ứng dụng đăng ký tham dự sự kiện. Khi tiếp nhận mã nguồn, cần kiểm tra công cụ PHP, các tệp của dự án và khả năng khởi chạy ứng dụng. Trong bài này, sinh viên sử dụng lệnh Linux và viết Shell Script để tự động thực hiện các bước kiểm tra đó.
+Khi đăng ký sự kiện, người dùng cần xem lại thông tin trước khi xác nhận và có thể quay lại để chỉnh sửa. Dữ liệu trong biến PHP của yêu cầu trước không tự được giữ cho yêu cầu tiếp theo. Bài này sử dụng Session để lưu bản nháp trên máy chủ và Cookie để ghi nhớ tùy chọn hiển thị.
 
-Mã PHP đã được cung cấp để phục vụ việc chạy thử. Nội dung thực hành tập trung vào biến, hàm, điều kiện, vòng lặp và xử lý lỗi trong Shell; chưa yêu cầu xây dựng chức năng Web.
+Bước hoàn tất trong bài chỉ ghi nhận kết quả mô phỏng trong Session; chưa lưu đăng ký vào cơ sở dữ liệu hoặc phát hành vé. Phần lưu CSDL không thuộc phạm vi bài thực hành Session này.
 
-![Trang mẫu dùng để kiểm tra môi trường](Hinh_anh/hinh_01.png)
+![Màn hình xác nhận của mã mẫu](Hinh_anh/hinh_01.png)
 
-*Trang mẫu dùng để kiểm tra môi trường*
-
-Kết quả mẫu: trình duyệt hiển thị CommunityPass và dòng “Mã nguồn PHP đã chạy trên máy của bạn”.
+*Màn hình xác nhận của mã mẫu*
 
 ## II. QUY TRÌNH THỰC HÀNH
 
-![Sơ đồ hướng thực hiện Lab 01](Hinh_anh/hinh_02.png)
+![Sơ đồ hướng thực hiện Lab 04](Hinh_anh/hinh_02.png)
 
-*Sơ đồ hướng thực hiện Lab 01*
+*Sơ đồ hướng thực hiện Lab 04*
 
 Sơ đồ thể hiện thứ tự thực hiện và các bước kiểm tra. Tại nút quyết định hình thoi, đối chiếu kết quả với yêu cầu; nếu chưa đạt, quay lại bước xử lý tương ứng trước khi tiếp tục.
 
-Mở thư mục Lab01/Ma\_nguon bằng trình soạn thảo và mở terminal Ubuntu tại thư mục này. Chạy pwd và ls để kiểm tra vị trí; danh sách tệp cần có lab.sh. Các đường dẫn trong bài được tính từ Ma\_nguon. Trên Windows, thực hiện lệnh Bash trong Ubuntu/WSL.
+Mở thư mục Lab04/Ma\_nguon bằng trình soạn thảo và mở terminal Ubuntu tại thư mục này. Chạy pwd và ls để kiểm tra vị trí; danh sách tệp cần có lab.sh. Các đường dẫn trong bài được tính từ Ma\_nguon. Trên Windows, thực hiện lệnh Bash trong Ubuntu/WSL.
 
 ```bash
 bash lab.sh check
 bash lab.sh run
 ```
 
-Kết quả chạy: mở http://127.0.0.1:8101. Giữ terminal máy chủ mở, dùng terminal thứ hai tại cùng thư mục để sửa/chạy test. Dừng bằng Ctrl+C; không mở hai máy chủ cùng cổng.
+Kết quả chạy: mở http://127.0.0.1:8104. Giữ terminal máy chủ mở, dùng terminal thứ hai tại cùng thư mục để sửa/chạy test. Dừng bằng Ctrl+C; không mở hai máy chủ cùng cổng.
 
 Kiểm tra trước khi thực hành:
 
@@ -63,268 +61,383 @@ Kiểm tra trước khi thực hành:
 - [ ] Chạy được chương trình mẫu và xác định được thư mục chứa mã nguồn.
 - [ ] Phân biệt lệnh test dùng cho bài mẫu và lệnh extend dùng cho bài tập mở rộng.
 
-## III. CẤU TRÚC MÃ NGUỒN
+## III. TỔ CHỨC DỮ LIỆU
 
-Thư mục Lab01/Ma\_nguon đã có mã mẫu cho phần hướng dẫn. Chạy mẫu trước để xem kết quả, sau đó đọc và thực hiện lại các bước ở phần IV trên chính các tệp đó. Khi bài yêu cầu thay toàn bộ nội dung, không chép nối thêm một hàm hoặc lớp trùng tên. Phần mở rộng để sinh viên tự hoàn thiện ở mục VI.
+Thư mục Lab04/Ma\_nguon đã có mã mẫu cho phần hướng dẫn. Chạy mẫu trước để xem kết quả, sau đó đọc và thực hiện lại các bước ở phần IV trên chính các tệp đó. Khi bài yêu cầu thay toàn bộ nội dung, không chép nối thêm một hàm hoặc lớp trùng tên. Phần mở rộng để sinh viên tự hoàn thiện ở mục VI.
 
 | **Phần thực hành** | **Tệp và công việc** | **Kết quả cần đạt** |
 | --- | --- | --- |
-| Mẫu có hướng dẫn | scripts/check-env.sh; public/index.php<br>Đọc trang PHP đã cấp; viết lại script kiểm tra PHP, Git và các tệp của dự án theo từng bước ở phần IV. | bash lab.sh test: có CHECK\_ENV=PASS, mã thoát 0. Trang mẫu ở cổng 8101. |
-| Bài tự mở rộng | scripts/scan-source.sh<br>Hoàn thiện ba vị trí TODO: kiểm tra thư mục, đếm tệp đúng/sai và trả mã kết quả. Kiểm tra cả thư mục con và tên có khoảng trắng. | bash lab.sh extend: SHELL\_CASES=4 FAILED=0. Có tệp sai: vẫn kiểm tra đủ tệp; thiếu/rỗng: mã 2. |
+| Mẫu có hướng dẫn | src/Draft.php; src/Session.php; public/register.php; public/confirm.php; public/complete.php<br>Đọc và thực hiện lại luồng nhập, lưu nháp, xác nhận, sửa và hủy. Phân biệt dữ liệu Session với Cookie tùy chọn. | Hoàn tất hợp lệ có SIMULATED\_OK; hủy xóa nháp. bash lab.sh test: TESTS=6 FAILED=0. Chưa ghi CSDL. |
+| Bài tự mở rộng | src/DraftGuard.php; public/confirm.php; public/complete.php<br>Viết canComplete, rồi nối vào bước hoàn tất. Kiểm tra sự kiện, thời điểm tạo, thời hạn và dữ liệu bản nháp. | bash lab.sh extend: TESTS=7 FAILED=0. Đúng mốc hết hạn phải từ chối; xác nhận hợp lệ vẫn chạy sau khi tích hợp. |
 
 Vai trò từng tệp trong bài mẫu:
 
-| **Tệp/thư mục** | Chức năng |
+| **Thành phần** | **Vai trò** |
 | --- | --- |
-| public/index.php | Trang Web được cấp sẵn; máy chủ PHP trả trang này cho trình duyệt. |
-| README.md | Hướng dẫn giới thiệu và sử dụng dự án. |
-| LICENSE | Văn bản giấy phép của mã mẫu. Chỉ đọc, không tự xóa tên tác giả. |
-| scripts/check-env.sh | Tệp bạn đọc và viết lại để kiểm tra môi trường và tệp dự án. |
+| src/Session.php | Đã cấp. Khởi tạo phiên, Cookie phiên và token bảo vệ form. |
+| src/Draft.php | Bạn đọc và sửa. Hàm lưu, kiểm tra tuổi và xóa bản nháp. |
+| public/register.php | Bạn đọc và sửa. Nhận form, lưu nháp, chuyển trang. |
+| public/confirm.php | Bạn đọc và sửa. Đọc nháp để xem lại, sửa hoặc hủy. |
+| public/complete.php | Bạn đọc và sửa. Kết thúc mô phỏng, xóa nháp rồi chuyển sang trang kết quả. |
+| public/cancel.php | Bạn đọc và sửa. Xử lý nút hủy bằng POST. |
+| public/preferences.php | Bạn đọc và sửa. Lưu tùy chọn xem vào Cookie. |
 
-Bash thực hiện các lệnh trong script, thông báo điều kiện đạt hoặc thiếu, sau đó trả mã kết quả cho chương trình gọi. Việc kiểm tra LICENSE trong bài chỉ xác nhận tệp tồn tại, không đánh giá nội dung hoặc việc tuân thủ giấy phép.
+Session của mẫu lưu draft gồm data (thông tin đăng ký) và created\_at (thời điểm tạo). Cookie view chỉ có giá trị compact hoặc full. Không lưu họ tên, email, mật khẩu hoặc quyền quản trị trong Cookie tùy chọn.
 
 ## IV. HƯỚNG DẪN THỰC HÀNH
 
-### Bước 1. Thử ba lệnh mà script sẽ sử dụng
+### Bước 1. Đọc tệp khởi tạo phiên đã cấp
 
-Trong terminal đang ở Ma\_nguon, chạy từng dòng:
+Mở src/Session.php. Tệp gọi session\_start() trước khi gửi HTML. Sau đó PHP đọc hoặc ghi dữ liệu bằng $\_SESSION. Trình duyệt nhận Cookie chứa định danh phiên; dữ liệu bản nháp nằm phía máy chủ \[PHP-SESSION\].
 
-```bash
-php -v
-git --version
-php -l public/index.php
-```
-
-Hai lệnh đầu in phiên bản công cụ. Lệnh thứ ba có chữ No syntax errors detected. Tham số -l yêu cầu PHP chỉ kiểm tra cú pháp tệp, không chạy chức năng của trang. Vì vậy một tệp đúng cú pháp vẫn có thể sai nghiệp vụ.
-
-Để xem lệnh có tồn tại trong môi trường, thử:
-
-```bash
-command -v php
-```
-
-Lệnh trả về đường dẫn đến PHP, chẳng hạn /usr/bin/php. Đường dẫn cụ thể phụ thuộc môi trường cài đặt.
+Tệp đã có hàm checkCsrf và trường csrf ẩn trong Form. Giữ các thành phần này khi sửa bài: chúng đối chiếu token của yêu cầu với token trong phiên. Giảng viên giới thiệu cơ chế hoạt động; bài chưa yêu cầu xây dựng chức năng đăng nhập.
 
 Kiểm tra kết quả bước 1:
 
-- [ ] Lệnh in phiên bản PHP/Git và thông báo không lỗi cú pháp; biết -l chỉ kiểm tra cú pháp.
+- [ ] Session được mở trước HTML; phần token đã cấp được giữ nguyên.
 
-### Bước 2. Tạo tệp Shell và chạy phiên bản đầu tiên
+### Bước 2. Tạo các hàm quản lý bản nháp
 
-Trong trình soạn thảo, tạo thư mục scripts nếu chưa có. Mở tệp scripts/check-env.sh và thay toàn bộ nội dung bằng đoạn sau:
+Mở src/Draft.php và đối chiếu với mã dưới đây. Nếu viết lại tệp, thay nội dung hiện tại; tránh khai báo trùng hàm hoặc lớp:
 
-```bash
-#!/usr/bin/env bash
-project_name="CommunityPass"
-echo "Kiểm tra dự án: $project_name"
+```php
+<?php
+declare(strict_types=1);
+function saveDraft(array &$session, array $data, int $now): void {
+    $session['draft'] = ['data'=>$data, 'created_at'=>$now];
+    unset($session['completed']);
+}
+function draftExpired(array $session, int $now, int $ttl): bool {
+    if (!isset($session['draft'])) { return true; }
+    return $now - $session['draft']['created_at'] >= $ttl;
+}
+function cancelDraft(array &$session): void { unset($session['draft']); }
 ```
 
-Lưu tệp, quay lại terminal rồi chạy:
+&amp;$session nhận tham chiếu để thay đổi mảng ở nơi gọi; khi truyền $\_SESSION, thay đổi được giữ trong phiên. Hàm saveDraft lưu dữ liệu và thời điểm tạo, đồng thời xóa kết quả hoàn tất cũ. unset chỉ xóa khóa được chỉ định, không xóa mọi dữ liệu của phiên.
 
-```bash
-bash scripts/check-env.sh
-```
+$now - created\_at là tuổi bản nháp tính bằng giây. Bản nháp hết hạn khi tuổi lớn hơn hoặc bằng $ttl. Nhận $now qua tham số giúp kiểm thử thời gian giả lập mà không phải chờ thật 30 phút.
 
-Kết quả: Kiểm tra dự án: CommunityPass.
-
-Dòng đầu chỉ định Bash; project\_name là biến; dấu $ lấy giá trị biến; echo in thông báo. Khi gán biến không đặt khoảng trắng quanh dấu =. Khi gọi qua bash ..., chưa cần cấp quyền thực thi. Sau này có thể dùng chmod +x scripts/check-env.sh rồi gọi ./scripts/check-env.sh.
+Mẫu dùng dữ liệu bản nháp do chính ứng dụng tạo nên hàm kiểm tra còn đơn giản. Phần tự làm sẽ xử lý dữ liệu thiếu, sai sự kiện và thời điểm không hợp lệ.
 
 Kiểm tra kết quả bước 2:
 
-- [ ] Script in Kiểm tra dự án: CommunityPass; tên biến không có khoảng trắng quanh dấu =.
+- [ ] Nháp gồm data/created\_at; lưu nháp mới xóa kết quả hoàn tất cũ.
 
-### Bước 3. Thử điều kiện có công cụ PHP
+### Bước 3. Tạo trang nhập và lưu nháp
 
-Thay toàn bộ nội dung tệp bằng đoạn dưới, lưu và chạy lại:
+Mở public/register.php:
 
-```bash
-#!/usr/bin/env bash
-if command -v php >/dev/null 2>&1; then
-    echo "OK tool php"
-else
-    echo "MISSING tool php"
-    exit 2
-fi
+```php
+<?php
+require __DIR__.'/../src/Session.php';
+require __DIR__.'/../src/Input.php';
+require __DIR__.'/../src/Draft.php';
+$events = require __DIR__.'/../data/events.php';
+$errors = [];
+$data = $_SESSION['draft']['data'] ?? ['event_id'=>1,'name'=>'','email'=>''];
+if ($_SERVER['REQUEST_METHOD'] === 'POST') {
+    checkCsrf($_POST);
+    $result = validateRegistration($_POST, $events);
+    $errors = $result['errors']; $data = $result['data'];
+    if (!$errors) {
+        saveDraft($_SESSION, $data, time());
+        header('Location: /confirm.php', true, 303); exit;
+    }
+}
+require __DIR__.'/../templates/header.php';
+?>
+<div class="page-heading">
+<h1>Bước 1. Nhập thông tin</h1>
+<p>Điền thông tin để chuyển đến bước xem lại bản nháp.</p>
+</div>
+<div class="error-summary" role="alert">
+<p class="error-messages"><?= e(implode(', ', $errors)) ?></p>
+<p>Thông tin chưa hợp lệ. Kiểm tra lại các thông tin đã nhập rồi gửi lại.</p>
+</div>
+<form class="registration-form" method="post">
+<input type="hidden" name="csrf" value="<?= e($_SESSION['csrf']) ?>">
+<label class="form-field" for="event_id">Sự kiện
+<select id="event_id" name="event_id">
+<?php foreach($events as $event): ?>
+<option value="<?= $event['id'] ?>" <?= (int)$data['event_id']===$event['id']?'selected':'' ?>>
+<?= e($event['title']) ?>
+</option>
+<?php endforeach; ?>
+</select>
+</label>
+<label class="form-field" for="name">Họ tên
+<input id="name" name="name" value="<?= e($data['name']) ?>">
+</label>
+<label class="form-field" for="email">Email
+<input id="email" name="email" value="<?= e($data['email']) ?>">
+</label>
+<button>Tiếp tục</button>
+</form>
+<form class="preferences-form" method="post" action="/preferences.php">
+<h2>Tùy chọn hiển thị</h2>
+<p>Form này chỉ lưu tùy chọn Cookie, không gửi đăng ký.</p>
+<input type="hidden" name="csrf" value="<?= e($_SESSION['csrf']) ?>">
+<label class="form-field" for="view">Cách hiển thị
+<select id="view" name="view">
+<option value="compact">Gọn</option>
+<option value="full">Đầy đủ</option>
+</select>
+</label>
+<button class="button-secondary">Lưu tùy chọn</button>
+</form>
+<p class="cookie-status">Tùy chọn Cookie: <?= e(field($_COOKIE, 'view')) ?>
+</p>
+<?php require __DIR__.'/../templates/footer.php'; ?>
 ```
 
-if xem lệnh kiểm tra có thành công hay không; then là nhánh đạt; else là nhánh thiếu; fi kết thúc điều kiện. Cụm &gt;/dev/null 2&gt;&amp;1 chỉ ẩn phần thông báo của lệnh kiểm tra để kết quả gọn; không biến lỗi thành thành công.
+Đọc phần PHP đầu tệp: nếu đã có nháp thì lấy dữ liệu điền lại form; nếu chưa có thì dùng giá trị rỗng. Khi POST, kiểm tra token trước, sau đó dùng hàm kiểm tra dữ liệu trong src/Input.php được cấp. Chỉ khi không có lỗi mới gọi saveDraft.
 
-Không gỡ PHP khỏi máy để thử nhánh thiếu. Có thể tạm thay tên kiểm tra php thành cong\_cu\_khong\_co, chạy để quan sát rồi đổi lại. Sau một lần chạy, gõ ngay:
+header('Location: /confirm.php', true, 303) yêu cầu trình duyệt chuyển sang GET trang xác nhận. exit ngăn chương trình tiếp tục xuất HTML sau khi đã chuyển hướng. Không đặt dòng echo hoặc HTML trước phần xử lý này.
 
-```bash
-echo "exit=$?"
-```
-
-$? chứa mã thoát của lệnh vừa chạy. Mã 0 nghĩa là thành công; mẫu này quy ước 2 là thiếu điều kiện chuẩn bị. Phải đọc mã ngay sau lệnh cần kiểm tra, trước khi chạy lệnh khác.
+Form sử dụng trường ẩn csrf; giá trị lấy từ Session. Form nhỏ thứ hai chỉ lưu tùy chọn hiển thị, không gửi đăng ký. Trang nhận dữ liệu của form này được xây dựng ở bước 7.
 
 Kiểm tra kết quả bước 3:
 
-- [ ] Thử tên công cụ không tồn tại thấy nhánh MISSING và mã 2, rồi khôi phục php.
+- [ ] Nhập hợp lệ chuyển đến xác nhận; quay lại sửa thấy đúng dữ liệu nháp.
 
-### Bước 4. Hoàn thiện script dùng hàm và vòng lặp
+### Bước 4. Tạo trang xác nhận
 
-Thay toàn bộ scripts/check-env.sh bằng phiên bản hoàn chỉnh sau. Đây là mã mẫu được phép sử dụng trong phần hướng dẫn:
+Mở public/confirm.php:
 
-```bash
-#!/usr/bin/env bash
-set -u
-root="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd)" || exit 2
-fail=0
-check_tool() {
-  if command -v "$1" >/dev/null 2>&1; then
-    printf 'OK tool %s\n' "$1"
-  else
-    printf 'MISSING tool %s\n' "$1" >&2
-    fail=$((fail + 1))
-  fi
+```php
+<?php
+require __DIR__.'/../src/Session.php';
+require __DIR__.'/../src/Input.php';
+require __DIR__.'/../src/Draft.php';
+if (draftExpired($_SESSION, time(), 1800)) {
+    cancelDraft($_SESSION);
+    header('Location: /register.php', true, 303); exit;
 }
-for tool in php git; do check_tool "$tool"; done
-for file in README.md public/index.php; do
-  if [[ -f "$root/$file" ]]; then
-    printf 'OK file %s\n' "$file"
-  else
-    printf 'MISSING file %s\n' "$file" >&2
-    fail=$((fail + 1))
-  fi
-done
-if [[ "$fail" -gt 0 ]]; then exit 2; fi
-if php -l "$root/public/index.php"; then
-  echo 'CHECK_ENV=PASS'
-else
-  echo 'CHECK_ENV=FAIL' >&2
-  exit 1
-fi
+$data = $_SESSION['draft']['data'];
+require __DIR__.'/../templates/header.php';
+?>
+<div class="page-heading">
+<h1>Bước 2. Xác nhận</h1>
+<p>Đối chiếu thông tin trước khi xác nhận.</p>
+</div>
+<section class="confirmation" aria-label="Thông tin đăng ký">
+<dl class="summary-list">
+<div>
+<dt>Họ tên</dt>
+<dd><?= e($data['name']) ?></dd>
+</div>
+<div>
+<dt>Email</dt>
+<dd><?= e($data['email']) ?></dd>
+</div>
+</dl>
+<div class="confirmation-actions">
+<a href="/register.php">Sửa lại</a>
+<form method="post" action="/complete.php">
+<input type="hidden" name="csrf" value="<?= e($_SESSION['csrf']) ?>">
+<button>Xác nhận</button>
+</form>
+<form method="post" action="/cancel.php">
+<input type="hidden" name="csrf" value="<?= e($_SESSION['csrf']) ?>">
+<button class="button-secondary button-cancel">Hủy bản nháp</button>
+</form>
+</div>
+</section>
+<?php require __DIR__.'/../templates/footer.php'; ?>
 ```
 
-Giải thích theo thứ tự thực thi:
+Nếu chưa có nháp hoặc nháp đã hết 1.800 giây, trang đưa người dùng về form. Nhờ đó không thể gõ thẳng URL xác nhận khi chưa nhập thông tin. Với nháp còn hiệu lực, trang chỉ đọc và hiển thị.
 
-| **Thành phần** | Ý nghĩa |
-| --- | --- |
-| set -u | Báo khi sử dụng biến chưa được khai báo; giảm nhầm tên biến. |
-| root=... | Tìm thư mục dự án từ vị trí tệp script. dirname lấy thư mục chứa script; /.. đi lên một cấp; pwd lấy đường dẫn đầy đủ. $(...) lấy kết quả lệnh làm giá trị biến. |
-| fail=0 | Biến đếm điều kiện chưa đạt. |
-| check\_tool() | Hàm nhận tên công cụ qua $1, kiểm tra và tăng biến đếm nếu thiếu. |
-| for tool in php git | Gọi cùng hàm cho PHP và Git, không viết lại hai khối if. |
-| \[\[ -f ... \]\] | Kiểm tra đường dẫn là một tệp có tồn tại. |
-| fail=$((fail + 1)) | Phép cộng số nguyên trong Bash. |
-| exit 2, exit 1 | Mẫu phân biệt thiếu điều kiện chạy và sai cú pháp PHP. |
-
-Dấu nháy kép giúp Bash coi đường dẫn có khoảng trắng là một đối số. Biến root xác định thư mục dự án từ vị trí script, vì vậy có thể chạy script từ thư mục khác.
+Nút Sửa lại là liên kết GET vì chỉ mở form. Hai nút Xác nhận và Hủy là form POST vì làm thay đổi trạng thái. Không bỏ e khi hiển thị họ tên hoặc email đã lưu.
 
 Kiểm tra kết quả bước 4:
 
-- [ ] Chỉ ra biến fail, hàm check\_tool, hai vòng lặp và điều kiện kết thúc.
+- [ ] Không có nháp hoặc nháp hết hạn thì quay về nhập, không xác nhận được.
 
-### Bước 5. Chạy script và đọc kết quả
+### Bước 5. Tạo bước hoàn tất mô phỏng
 
-```bash
-bash scripts/check-env.sh
-echo "exit=$?"
+Mở public/complete.php:
+
+```php
+<?php
+require __DIR__.'/../src/Session.php';
+require __DIR__.'/../src/Input.php';
+require __DIR__.'/../src/Draft.php';
+if ($_SERVER['REQUEST_METHOD'] === 'POST') {
+    checkCsrf($_POST);
+    if (draftExpired($_SESSION, time(), 1800)) {
+        cancelDraft($_SESSION);
+        header('Location: /register.php', true, 303); exit;
+    }
+    $_SESSION['completed'] = 'SIMULATED_OK';
+    cancelDraft($_SESSION);
+    header('Location: /complete.php', true, 303); exit;
+}
+if (!isset($_SESSION['completed'])) {
+    header('Location: /register.php', true, 303); exit;
+}
+require __DIR__.'/../templates/header.php';
+?>
+<div class="page-heading">
+<h1>Bước 3. Hoàn tất mô phỏng</h1>
+</div>
+<section class="completion" role="status">
+<p class="status-message">
+<?= e($_SESSION['completed']) ?>
+</p>
+<p>Chưa ghi vào CSDL; đây không phải vé hoặc bằng chứng đăng ký thật.</p>
+</section>
+<?php require __DIR__.'/../templates/footer.php'; ?>
 ```
 
-Kết quả có OK tool php, OK tool git, OK file README.md, OK file public/index.php, CHECK\_ENV=PASS và cuối cùng exit=0. Thông báo cú pháp PHP có đường dẫn riêng của máy bạn.
+POST hợp lệ tạo dấu SIMULATED\_OK trong Session, xóa bản nháp, rồi chuyển sang GET cùng trang. Làm mới trang kết quả sẽ không gửi lại POST. Nếu gõ trực tiếp URL mà chưa hoàn tất, mẫu đưa về form.
 
-Thử chạy từ thư mục khác:
-
-```bash
-cd ..
-bash Ma_nguon/scripts/check-env.sh
-cd Ma_nguon
-```
-
-Script vẫn tìm được tệp vì dùng root. Đây là lý do không nên viết mọi đường dẫn phụ thuộc vào nơi người dùng đang đứng.
+Đây là luồng POST → chuyển hướng → GET. Nó giúp tránh một số hành vi gửi lại form do tải lại trang; không được coi là cơ chế bảo đảm mọi thao tác ghi dữ liệu không bao giờ lặp. Khi có thao tác ghi CSDL, cần kiểm tra thêm ràng buộc dữ liệu.
 
 Kiểm tra kết quả bước 5:
 
-- [ ] Chạy từ thư mục cha vẫn tìm được README và public/index.php.
+- [ ] Hoàn tất mô phỏng cho kết quả trong phiên; hiểu rằng chưa tạo hàng CSDL.
 
-### Bước 6. Tạo lỗi có kiểm soát rồi khôi phục
+### Bước 6. Tạo xử lý hủy
 
-Thực hiện tại thư mục Ma\_nguon của bài:
+Mở public/cancel.php:
 
-```bash
-mv README.md README.backup
-bash scripts/check-env.sh
-echo "exit=$?"
-mv README.backup README.md
-bash scripts/check-env.sh
-echo "exit=$?"
+```php
+<?php
+require __DIR__.'/../src/Session.php';
+require __DIR__.'/../src/Draft.php';
+if ($_SERVER['REQUEST_METHOD'] !== 'POST') { http_response_code(405); exit('POST_REQUIRED'); }
+checkCsrf($_POST);
+cancelDraft($_SESSION);
+header('Location: /register.php', true, 303); exit;
 ```
 
-Lần thiếu tệp có MISSING file README.md và mã 2. Sau khi đổi tên trở lại, kết quả là CHECK\_ENV=PASS và mã 0. Không dùng rm để xóa tài liệu gốc.
+Mã chỉ nhận POST, kiểm tra token rồi xóa khóa bản nháp. Không gọi session\_destroy() vì ta không muốn xóa token và mọi trạng thái khác của phiên chỉ để hủy một form.
 
 Kiểm tra kết quả bước 6:
 
-- [ ] Đổi tên README báo mã 2; khôi phục báo mã 0, không mất tệp.
+- [ ] Hủy xóa nháp và quay lại nhập; không xóa toàn bộ dữ liệu phiên.
 
-### Bước 7. Khởi chạy lại phần mềm
+### Bước 7. Ghi và đọc Cookie tùy chọn
 
-```bash
-bash lab.sh run
+Mở public/preferences.php:
+
+```php
+<?php
+require __DIR__.'/../src/Session.php';
+if ($_SERVER['REQUEST_METHOD'] !== 'POST') { http_response_code(405); exit('POST_REQUIRED'); }
+checkCsrf($_POST);
+$view = $_POST['view'] ?? '';
+if (!is_string($view) || !in_array($view, ['compact', 'full'], true)) {
+    http_response_code(422); exit('VIEW_INVALID');
+}
+setcookie('view', $view, ['expires'=>time()+3600, 'path'=>'/', 'httponly'=>true,
+    'samesite'=>'Lax', 'secure'=>isset($_SERVER['HTTPS']) && $_SERVER['HTTPS'] !== 'off']);
+header('Location: /register.php', true, 303); exit;
 ```
 
-Mở lại trang trong trình duyệt để kiểm tra ứng dụng. Script scripts/check-env.sh là phần sinh viên thực hiện; lab.sh run chỉ hỗ trợ khởi chạy máy chủ. Nhấn Ctrl+C để dừng máy chủ trước khi chuyển nội dung.
+Cookie tồn tại một giờ và áp dụng cho đường dẫn /. Giá trị chỉ được chọn trong hai lựa chọn đã công bố. Sau setcookie, trình duyệt nhận Cookie rồi gửi lại trong request tiếp theo; việc chuyển hướng giúp trang form đọc được giá trị mới qua $\_COOKIE.
+
+Trong giao diện mẫu, lựa chọn được hiển thị bằng dòng “Tùy chọn Cookie”; chưa thay toàn bộ cách bố trí giao diện. Các thuộc tính httponly, samesite và secure được cấp sẵn. secure bật khi chạy HTTPS; môi trường HTTP cục bộ không được đặt Secure cố định, nếu không trình duyệt sẽ không gửi Cookie đó qua HTTP.
 
 Kiểm tra kết quả bước 7:
 
-- [ ] Trình duyệt tại cổng 8101 hiện trang mẫu; biết dừng máy chủ bằng Ctrl+C.
+- [ ] Cookie chỉ chứa compact/full và đọc được ở request tiếp theo; không lưu thông tin nhạy cảm.
 
-Kết quả sau phần hướng dẫn: bash lab.sh test: có CHECK\_ENV=PASS, mã thoát 0. Trang mẫu ở cổng 8101.
+Kết quả sau phần hướng dẫn: Hoàn tất hợp lệ có SIMULATED\_OK; hủy xóa nháp. bash lab.sh test: TESTS=6 FAILED=0. Chưa ghi CSDL.
 
 ## V. LỖI THƯỜNG GẶP VÀ CÁCH KHẮC PHỤC
 
-| **Hiện tượng** | **Kiểm tra và cách sửa** |
+```bash
+php tests/run.php
+bash lab.sh run
+```
+
+Nếu máy chủ cũ còn chạy, dùng terminal thứ hai để chạy test hoặc dừng bằng Ctrl+C. Mở đúng địa chỉ của bài thực hành.
+
+| **Phép thử** | **Kết quả cần thấy** |
 | --- | --- |
-| No such file or directory | Chạy pwd, ls; bảo đảm đứng ở Ma\_nguon, không phải thư mục Sinh\_vien. |
-| php: command not found | Thực hiện phần cài công cụ trong mục I của bài này; không sửa script để bỏ qua điều kiện thiếu PHP. |
-| Tệp báo bad interpreter hoặc chứa ký tự ^M | Đổi kiểu xuống dòng từ CRLF sang LF trong trình soạn thảo, rồi lưu lại. |
-| Trình duyệt báo không kết nối | Giữ terminal máy chủ đang chạy; kiểm tra đúng địa chỉ và cổng. |
-| Address already in use | Dừng máy chủ cũ bằng Ctrl+C. Không chạy hai bản mẫu và bài làm cùng cổng. |
+| Nhập hợp lệ → Tiếp tục | Sang xác nhận, thông tin đúng. |
+| Sửa lại → thay họ tên → Tiếp tục | Xác nhận dùng tên mới. |
+| Hủy bản nháp | Trở về form; không giữ bản nháp vừa hủy. |
+| Xác nhận → tải lại trang | Vẫn SIMULATED\_OK, không cần gửi lại form. |
+| Mở xác nhận trong cửa sổ riêng tư mới | Bị đưa về form vì phiên mới chưa có nháp. |
+| Lưu tùy chọn compact | Request tiếp theo hiển thị Cookie compact. |
 
-## VI. BÀI TẬP MỞ RỘNG: KIỂM TRA NHIỀU TỆP PHP
+Hai tab trong cùng trình duyệt thường dùng chung Cookie phiên; không dùng hai tab để chứng minh hai người dùng độc lập. Dùng cửa sổ riêng tư hoặc trình duyệt khác. Giữ token bảo vệ biểu mẫu và thông tin cá nhân trong môi trường thực hành.
 
-Viết script kiểm tra cú pháp tất cả tệp PHP trong một thư mục, kể cả các thư mục con. Vận dụng cách kiểm tra công cụ, điều kiện và vòng lặp đã thực hiện trong bài mẫu.
+| **Lỗi** | **Cách kiểm tra** |
+| --- | --- |
+| Headers already sent | Có khoảng trắng/BOM/HTML trước session\_start hoặc header không? |
+| CSRF\_INVALID | Có giữ trường hidden csrf và dùng cùng phiên không? Tải lại form để nhận token hợp lệ, không tắt kiểm tra. |
+| Sửa lại nhưng mất dữ liệu | Xem dữ liệu được lấy từ $\_SESSION\['draft'\]\['data'\] và truyền vào giá trị input chưa. |
+| Cookie chưa có ngay sau khi ghi | Đọc ở request tiếp theo; giữ chuyển hướng sau setcookie. |
 
-Không đổi thư mục. Bài mở rộng dùng thêm một tệp và bộ kiểm thử ngay trong dự án:
+## VI. BÀI TẬP MỞ RỘNG: KIỂM TRA BẢN NHÁP TRƯỚC KHI HOÀN TẤT
 
 ```bash
 # Vẫn đứng trong Ma_nguon của bài này.
 bash lab.sh extend
 ```
 
-Mở scripts/scan-source.sh và hoàn thiện ba vị trí TODO: kiểm tra đầu vào, đếm tệp đúng/sai cú pháp và trả kết quả tổng hợp. Phần tìm tệp, xử lý tên có khoảng trắng và dọn tệp tạm đã được cung cấp.
+Hoàn thiện hàm canComplete trong src/DraftGuard.php. Kiểm thử hàm trước, sau đó tích hợp vào trang hoàn tất theo hướng dẫn dưới đây.
 
-| **Đầu vào kiểm thử** | Kết quả yêu cầu |
-| --- | --- |
-| Hai tệp đúng, một tên đường dẫn có khoảng trắng | TOTAL=2 PASS=2 FAIL=0, mã 0. |
-| Ba tệp, trong đó một tệp sai cú pháp | Kiểm tra đủ ba tệp; TOTAL=3 PASS=2 FAIL=1, mã 1. |
-| Thư mục không tồn tại | Báo lỗi và mã 2. |
-| Thư mục không có tệp PHP | Báo không có tệp để kiểm tra và mã 2. |
+Hàm nhận mảng Session, ID sự kiện đang yêu cầu, thời gian hiện tại và thời gian sống. Chỉ trả true khi có bản nháp hợp lệ, đúng sự kiện, chưa hết hạn, thời điểm tạo không ở tương lai và thời gian sống lớn hơn 0. Thời điểm đúng ngưỡng hết hạn phải trả false.
 
-Chạy bash lab.sh extend. Kết quả yêu cầu là SHELL\_CASES=4 FAILED=0. Bản khởi đầu có thể chưa đạt vì còn TODO. Đặt php -l trong nhánh if để tiếp tục kiểm tra các tệp còn lại khi phát hiện một tệp lỗi.
+Chạy bash lab.sh extend để kiểm tra 7 ca mở rộng; chạy lại bash lab.sh test để kiểm tra chức năng cũ. Bộ kiểm thử sử dụng now=1300, created\_at=1000, ttl=300 cho trường hợp đúng ngưỡng hết hạn, nên không cần chờ thời gian thực.
+
+### Nối hàm kiểm tra vào bước hoàn tất
+
+Sau khi bash lab.sh extend đạt, mở public/confirm.php. Trong form action="/complete.php", ngay sau trường ẩn csrf, thêm trường ID sự kiện:
+
+```php
+<input type="hidden" name="event_id"
+       value="<?= (int)$data['event_id'] ?>">
+```
+
+Không thêm trường này vào form hủy. Trình duyệt gửi ID để hàm đối chiếu với bản nháp phía máy chủ; trường ẩn không phải bằng chứng quyền truy cập. Nếu thiếu trường, hàm nhận ID 0 và từ chối ngay cả đăng ký hợp lệ.
+
+Tiếp theo mở public/complete.php. Thêm ngay sau các dòng require:
+
+```php
+require __DIR__.'/../src/DraftGuard.php';
+```
+
+Trong nhánh POST, giữ checkCsrf($\_POST). Thay điều kiện kiểm tra bản nháp trước khi hoàn tất bằng điều kiện gọi hàm vừa viết:
+
+```php
+if (!canComplete($_SESSION, (int)field($_POST, 'event_id'), time(), 1800)) {
+    cancelDraft($_SESSION);
+    header('Location: /register.php', true, 303);
+    exit;
+}
+```
+
+Giữ nguyên phần hoàn tất mô phỏng phía sau. Gửi form xác nhận hợp lệ phải đến trang hoàn tất; yêu cầu sai sự kiện hoặc bản nháp hết hạn phải quay lại form. Thử bằng dữ liệu giả trên máy học tập.
 
 ## KẾT QUẢ CỦA BÀI THỰC HÀNH
 
-Hoàn thành script kiểm tra môi trường và script quét mã PHP; xử lý được thư mục thiếu, thư mục rỗng, tệp sai cú pháp và đường dẫn có khoảng trắng.
+Có luồng nhập, xem lại, sửa, hủy và hoàn tất mô phỏng; bản nháp sai hoặc hết hạn bị từ chối; các phiên sử dụng và tùy chọn giao diện tách biệt.
 
 ## VII. BẢNG KIỂM HOÀN THÀNH
 
-- [ ] Script kiểm tra đủ PHP, Git và tệp cần thiết.
-- [ ] Bộ quét kiểm tra cả thư mục con và đường dẫn có khoảng trắng.
-- [ ] Kết quả tổng hợp khớp số tệp; từng tình huống có mã thoát đúng.
-- [ ] Dữ liệu thử vẫn còn nguyên sau khi kiểm tra.
-- [ ] Chạy lại test và extend đều đạt trên bản mã nộp.
+- [ ] Tải lại trang xác nhận giữ đúng bản nháp còn hạn.
+- [ ] Sửa và hủy không làm thay đổi phiên của người khác.
+- [ ] Nháp hết hạn/sai sự kiện không hoàn tất được.
+- [ ] Yêu cầu thiếu token bị từ chối; Cookie giữ đúng tùy chọn.
+- [ ] test và extend đạt; luồng Web thực sự gọi kiểm tra bản nháp.
 
-Kết quả tổng hợp của phần tự làm phải có SHELL\_CASES=4 FAILED=0. Ngoài các phép thử tự động, thực hiện các tình huống kiểm tra trực tiếp nêu trong bài. Lệnh check chỉ xác nhận môi trường, không thay cho test và extend.
+Kết quả tổng hợp của phần tự làm phải có TESTS=7 FAILED=0. Ngoài các phép thử tự động, thực hiện các tình huống kiểm tra trực tiếp nêu trong bài. Lệnh check chỉ xác nhận môi trường, không thay cho test và extend.
 
 ## VIII. RUBRIC LAB — 10 ĐIỂM
 
 | **Tiêu chí** | **Điểm** | **Cách chấm** |
 | --- | --- | --- |
 | Phần mẫu có hướng dẫn | 2,0 | 1 điểm: thực hiện và có kết quả đúng; 1 điểm: giải thích luồng mã. Mỗi phần đạt một phần: 0,5; chưa đạt: 0. |
-| Kiểm tra đầu vào | 1,0 | Từ chối thư mục thiếu/không đọc được; báo mã 2 cho thư mục không có PHP. |
-| Duyệt và kiểm tra tệp | 1,5 | Kiểm tra đệ quy, giữ đúng tên có khoảng trắng; không dừng ở tệp lỗi đầu tiên. |
-| Tổng hợp và mã thoát | 1,5 | Tổng TOTAL/PASS/FAIL đúng; mã 0 khi tất cả đạt, 1 khi có tệp lỗi, 2 khi đầu vào không dùng được. |
+| Kiểm tra bản nháp | 1,5 | Từ chối nháp không tồn tại, hết hạn, sai sự kiện hoặc sai cấu trúc theo yêu cầu. |
+| Tích hợp luồng xác nhận | 1,5 | Gọi phần kiểm tra trước khi hoàn tất; sửa/hủy giữ đúng trạng thái và không ảnh hưởng dữ liệu phiên khác. |
+| Bảo vệ thao tác | 1,0 | Thao tác đổi dữ liệu dùng POST và token được cấp; Cookie tùy chọn không chứa dữ liệu đăng ký hoặc quyền. |
 | Kiểm thử và xử lý lỗi | 2,0 | 1 điểm: có dữ liệu và kết quả mong đợi cho tình huống đúng, sai, biên; 1 điểm: chạy lại phần mẫu và mở rộng sau sửa. Mỗi phần đạt một phần: 0,5; chưa đạt: 0. |
 | Mã nguồn và bàn giao | 1,0 | 0,5: nộp đúng tệp, dữ liệu và phiên bản; 0,5: README có lệnh chạy/kiểm thử, không chứa cấu hình riêng. Đạt một phần mỗi mục: 0,25. |
 | Giải thích cá nhân | 1,0 | 0,5: giải thích phần tự viết; 0,5: giải thích một ca lỗi hoặc thực hiện một thay đổi nhỏ. Đạt một phần mỗi mục: 0,25. |
@@ -334,8 +447,8 @@ Với tiêu chí 1,5 điểm: đủ yêu cầu được 1,5; thực hiện một
 
 ## IX. NỘP BÀI
 
-Bước 1. Lưu mã bài mẫu và bài tự làm tại Lab01/Ma\_nguon, kèm dữ liệu, kiểm thử và README. Loại bỏ .local, mật khẩu và dữ liệu cá nhân thật khỏi bài nộp.
+Bước 1. Lưu mã bài mẫu và bài tự làm tại Lab04/Ma\_nguon, kèm dữ liệu, kiểm thử và README. Loại bỏ .local, mật khẩu và dữ liệu cá nhân thật khỏi bài nộp.
 
 Bước 2. Chạy bash lab.sh check, bash lab.sh test và bash lab.sh extend. Thực hiện các phép kiểm tra trực tiếp trong bài và sửa lỗi trước khi nộp.
 
-Bước 3. Commit, đẩy mã lên GitHub và nộp tên nhóm/thành viên, Lab 01, liên kết Ma\_nguon tại đúng commit. Kiểm tra quyền đọc; kèm lần chạy Actions khi được yêu cầu. Hạn và địa chỉ nộp do giảng viên công bố. Nếu nhận ZIP, giữ nguyên cấu trúc trên.
+Bước 3. Commit, đẩy mã lên GitHub và nộp tên nhóm/thành viên, Lab 04, liên kết Ma\_nguon tại đúng commit. Kiểm tra quyền đọc; kèm lần chạy Actions khi được yêu cầu. Hạn và địa chỉ nộp do giảng viên công bố. Nếu nhận ZIP, giữ nguyên cấu trúc trên.
