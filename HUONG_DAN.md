@@ -1,59 +1,107 @@
-# LAB 04 — QUẢN LÝ BẢN NHÁP BẰNG SESSION VÀ COOKIE
+# LAB 05 — LƯU, TRUY VẤN VÀ THỐNG KÊ ĐĂNG KÝ VỚI POSTGRESQL
 
 Học phần: Phát triển phần mềm mã nguồn mở. Đối tượng: sinh viên năm 3, chuyên ngành Phát triển phần mềm. Bài thực hành sử dụng mã nguồn CommunityPass được cấp trong thư mục Ma\_nguon.
 
 ## I. MỤC TIÊU VÀ CHUẨN BỊ
 
-Nội dung bài giảng: Chương 3, slide 23–31: Session, Cookie, khởi tạo, đọc, cập nhật và xóa. Số trang tính cả trang bìa. Git và kiểm thử được sử dụng để hỗ trợ thực hành.
+Nội dung bài giảng: Chương 4, slide 5–10: PostgreSQL và kết nối PHP; 12–17: MySQLi và truy vấn tham số để đối chiếu. Số trang tính cả trang bìa. Git và kiểm thử được sử dụng để hỗ trợ thực hành.
 
 Sau khi hoàn thành bài thực hành, sinh viên có khả năng:
 
-- Phân biệt dữ liệu Session ở phía máy chủ và tùy chọn Cookie phía trình duyệt.
-- Xây luồng nhập, xác nhận, sửa, hủy và hoàn tất mô phỏng.
-- Kiểm tra nháp vắng mặt, hết hạn và hai phiên độc lập.
-- Hoàn thiện kiểm tra bản nháp, thời hạn và các thao tác sửa, hủy, xác nhận trong một phiên sử dụng.
+- Tạo/đọc bảng quan hệ và giải thích khóa, ràng buộc duy nhất.
+- Lưu/đọc đăng ký bằng PHP và truy vấn tham số hóa.
+- Phân biệt dữ liệu trùng với lỗi CSDL; kiểm chứng lưu bền vững.
+- Viết truy vấn thống kê đúng, kiểm tra ràng buộc dữ liệu và hoàn thiện luồng lưu/đọc đăng ký.
 
 Chuẩn bị: đọc nội dung bài giảng được nêu trên, giải nén trọn thư mục của lab và mở Ma\_nguon trong trình soạn thảo. Bài đã có đủ mã và dữ liệu khởi đầu; chỉ sửa những tệp được chỉ rõ trong phần hướng dẫn và bài tự làm.
 
 ### Công cụ cần có
 
-Sử dụng terminal Ubuntu hoặc Ubuntu trong WSL, PHP từ 8.1 và Git. Nếu máy đã có đủ công cụ, chỉ cần kiểm tra phiên bản. Trên máy được phép cài phần mềm, thực hiện:
-
-```bash
-sudo apt update
-sudo apt install php-cli git unzip
-php -v
-git --version
-```
-
-Các lệnh Bash chạy trong terminal Ubuntu, không chạy trong PowerShell. Bài này không cần cơ sở dữ liệu hoặc framework.
+Cần Ubuntu/WSL, PHP từ 8.1, Git, PostgreSQL, psql và phần mở rộng PHP pgsql. Toàn bộ thao tác cài đặt, tạo tài khoản, cấu hình và thử kết nối nằm trong mục “Chuẩn bị riêng cho Lab 05” của chính bài này.
 
 ### Bối cảnh và nội dung thực hành
 
-Khi đăng ký sự kiện, người dùng cần xem lại thông tin trước khi xác nhận và có thể quay lại để chỉnh sửa. Dữ liệu trong biến PHP của yêu cầu trước không tự được giữ cho yêu cầu tiếp theo. Bài này sử dụng Session để lưu bản nháp trên máy chủ và Cookie để ghi nhớ tùy chọn hiển thị.
+Thông tin trong Session là bản nháp. Trong bài này, nút xác nhận gọi PostgreSQL để lưu một hàng trong bảng registrations và trả CREATED hoặc DUPLICATE. Dữ liệu được kiểm tra lại sau khi khởi động lại ứng dụng.
 
-Bước hoàn tất trong bài chỉ ghi nhận kết quả mô phỏng trong Session; chưa lưu đăng ký vào cơ sở dữ liệu hoặc phát hành vé. Phần lưu CSDL không thuộc phạm vi bài thực hành Session này.
+Bài mẫu tập trung lưu dữ liệu và chống trùng theo cặp sự kiện–email. Chưa giải quyết giới hạn suất cuối khi nhiều người đăng ký đồng thời. Trang danh sách ban đầu vẫn dùng dữ liệu giả lập; không được dùng số chỗ trên trang đó để khẳng định số chỗ thực tế trong CSDL.
 
-![Màn hình xác nhận của mã mẫu](Hinh_anh/hinh_01.png)
-
-*Màn hình xác nhận của mã mẫu*
+Kết quả cần quan sát: xác nhận lần đầu có CREATED; đăng ký lại cùng email và sự kiện có DUPLICATE; truy vấn SQL chỉ có một hàng. Đóng rồi mở máy chủ PHP không làm mất hàng đã lưu.
 
 ## II. QUY TRÌNH THỰC HÀNH
 
-![Sơ đồ hướng thực hiện Lab 04](Hinh_anh/hinh_02.png)
+![Sơ đồ hướng thực hiện Lab 05](Hinh_anh/hinh_01.png)
 
-*Sơ đồ hướng thực hiện Lab 04*
+*Sơ đồ hướng thực hiện Lab 05*
 
 Sơ đồ thể hiện thứ tự thực hiện và các bước kiểm tra. Tại nút quyết định hình thoi, đối chiếu kết quả với yêu cầu; nếu chưa đạt, quay lại bước xử lý tương ứng trước khi tiếp tục.
 
-Mở thư mục Lab04/Ma\_nguon bằng trình soạn thảo và mở terminal Ubuntu tại thư mục này. Chạy pwd và ls để kiểm tra vị trí; danh sách tệp cần có lab.sh. Các đường dẫn trong bài được tính từ Ma\_nguon. Trên Windows, thực hiện lệnh Bash trong Ubuntu/WSL.
+Mở thư mục Lab05/Ma\_nguon bằng trình soạn thảo và mở terminal Ubuntu tại thư mục này. Chạy pwd và ls để kiểm tra vị trí; danh sách tệp cần có lab.sh. Các đường dẫn trong bài được tính từ Ma\_nguon. Trên Windows, thực hiện lệnh Bash trong Ubuntu/WSL.
+
+Riêng bài này: hoàn thành mục “Chuẩn bị riêng cho Lab 05” bên dưới trước. Sau khi check đạt và schema được tạo ở bước 1, mới chạy Web ở bước 6.
+
+Địa chỉ dùng ở bước 6: mở http://127.0.0.1:8105. Giữ terminal máy chủ mở, dùng terminal thứ hai tại cùng thư mục để sửa/chạy test. Dừng bằng Ctrl+C; không mở hai máy chủ cùng cổng.
+
+### Chuẩn bị riêng cho Lab 05
+
+### A. Cài công cụ trên Ubuntu/WSL trước bài thực hành
+
+Thực hiện trên máy cá nhân có quyền quản trị hoặc máy thực hành được cấp. PostgreSQL chỉ cần cho bài này.
 
 ```bash
-bash lab.sh check
-bash lab.sh run
+sudo apt update
+sudo apt install php-cli git unzip postgresql postgresql-client php-pgsql
+sudo service postgresql start
+psql --version
+php -m | grep pgsql
 ```
 
-Kết quả chạy: mở http://127.0.0.1:8104. Giữ terminal máy chủ mở, dùng terminal thứ hai tại cùng thư mục để sửa/chạy test. Dừng bằng Ctrl+C; không mở hai máy chủ cùng cổng.
+Kết quả cần có: psql hiển thị phiên bản; danh sách phần mở rộng có pgsql. Nếu máy có nhiều phiên bản PHP, cài phần mở rộng khớp php -v. Không sửa mã ứng dụng để che lỗi thiếu công cụ.
+
+### B. Tạo tài khoản và CSDL chỉ dùng cho bài
+
+Mở psql bằng tài khoản quản trị cục bộ. Các lệnh CREATE dưới đây chỉ chạy một lần khi tên chưa tồn tại; nếu lớp đã cấp CSDL thì sử dụng thông tin được cấp, không tạo lại.
+
+```bash
+sudo -u postgres psql
+```
+
+```sql
+SELECT rolname FROM pg_roles WHERE rolname = 'communitypass_lab_v5';
+SELECT datname FROM pg_database WHERE datname = 'communitypass_lab_v5';
+```
+
+Nếu hai truy vấn đều không có hàng, gõ lần lượt trong cửa sổ psql:
+
+```sql
+CREATE ROLE communitypass_lab_v5 LOGIN;
+\password communitypass_lab_v5
+```
+
+Nhập mật khẩu riêng hai lần tại lời nhắc; không đưa mật khẩu vào tài liệu, dòng lệnh công khai hoặc kho mã.
+
+```sql
+CREATE DATABASE communitypass_lab_v5 OWNER communitypass_lab_v5;
+\q
+```
+
+Nếu tên đã có, hỏi giảng viên trước khi sử dụng hoặc tạo tên riêng cho nhóm và nhập đúng tên ở bước cấu hình. Không xóa CSDL đang có để làm lại bài.
+
+### C. Lưu cấu hình và kiểm tra kết nối
+
+Trở về terminal tại Lab05/Ma\_nguon. Chạy các lệnh bên dưới. Khi db-config hỏi, dùng tên CSDL, tài khoản và mật khẩu vừa tạo; mặc định máy chủ 127.0.0.1, cổng 5432. Công cụ chỉ lưu cấu hình sau khi kết nối thành công.
+
+```bash
+bash lab.sh db-config
+bash lab.sh check
+bash lab.sh sql
+```
+
+```sql
+SELECT current_database(), current_user;
+\q
+```
+
+Kiểm tra tên cơ sở dữ liệu và tài khoản theo cấu hình được giao. Tệp .local/db.json chứa mật khẩu và chỉ lưu trên máy thực hành; không đưa .local vào Git hoặc bài nộp. Nếu thiếu pgsql hoặc chưa kết nối được, dừng và hoàn thiện môi trường trước khi chạy tiếp. Mỗi máy hoặc nhóm sử dụng cơ sở dữ liệu riêng.
 
 Kiểm tra trước khi thực hành:
 
@@ -61,383 +109,343 @@ Kiểm tra trước khi thực hành:
 - [ ] Chạy được chương trình mẫu và xác định được thư mục chứa mã nguồn.
 - [ ] Phân biệt lệnh test dùng cho bài mẫu và lệnh extend dùng cho bài tập mở rộng.
 
-## III. TỔ CHỨC DỮ LIỆU
+Nếu chưa có dịch vụ hoặc chưa kết nối: kiểm tra sudo service postgresql status, cổng ở pg\_lsclusters và tên/mật khẩu đã nhập. Đến khi check đạt mới chạy phần tạo bảng. Các lệnh psql được tham khảo từ PostgreSQL Manual: https://www.postgresql.org/docs/current/app-psql.html .
 
-Thư mục Lab04/Ma\_nguon đã có mã mẫu cho phần hướng dẫn. Chạy mẫu trước để xem kết quả, sau đó đọc và thực hiện lại các bước ở phần IV trên chính các tệp đó. Khi bài yêu cầu thay toàn bộ nội dung, không chép nối thêm một hàm hoặc lớp trùng tên. Phần mở rộng để sinh viên tự hoàn thiện ở mục VI.
+## III. CẤU TRÚC DỮ LIỆU VÀ MÃ NGUỒN
+
+Thư mục Lab05/Ma\_nguon đã có mã mẫu cho phần hướng dẫn. Chạy mẫu trước để xem kết quả, sau đó đọc và thực hiện lại các bước ở phần IV trên chính các tệp đó. Khi bài yêu cầu thay toàn bộ nội dung, không chép nối thêm một hàm hoặc lớp trùng tên. Phần mở rộng để sinh viên tự hoàn thiện ở mục VI.
 
 | **Phần thực hành** | **Tệp và công việc** | **Kết quả cần đạt** |
 | --- | --- | --- |
-| Mẫu có hướng dẫn | src/Draft.php; src/Session.php; public/register.php; public/confirm.php; public/complete.php<br>Đọc và thực hiện lại luồng nhập, lưu nháp, xác nhận, sửa và hủy. Phân biệt dữ liệu Session với Cookie tùy chọn. | Hoàn tất hợp lệ có SIMULATED\_OK; hủy xóa nháp. bash lab.sh test: TESTS=6 FAILED=0. Chưa ghi CSDL. |
-| Bài tự mở rộng | src/DraftGuard.php; public/confirm.php; public/complete.php<br>Viết canComplete, rồi nối vào bước hoàn tất. Kiểm tra sự kiện, thời điểm tạo, thời hạn và dữ liệu bản nháp. | bash lab.sh extend: TESTS=7 FAILED=0. Đúng mốc hết hạn phải từ chối; xác nhận hợp lệ vẫn chạy sau khi tích hợp. |
+| Mẫu có hướng dẫn | src/Database.php; src/RegistrationRepository.php; database/schema.sql; demo-db.php; public/complete.php<br>Cấu hình PostgreSQL riêng, tạo bảng; đọc và thực hiện lại phần lưu/đọc đăng ký bằng truy vấn có tham số. | Tạo lần đầu: CREATED; lặp cùng email/sự kiện: DUPLICATE. Sau khi đủ môi trường, test in TESTS=6 FAILED=0 và TESTS=7 FAILED=0. |
+| Bài tự mở rộng | src/RegistrationStats.php<br>Viết truy vấn thống kê theo sự kiện bằng LEFT JOIN. Sự kiện chưa có đăng ký trả total=0; ID không tồn tại trả mảng rỗng. | Sau khi đủ môi trường, bash lab.sh extend: TESTS=4 FAILED=0. Đây là kết quả yêu cầu; PostgreSQL chưa được chạy trong bản kiểm tra bàn giao. |
 
 Vai trò từng tệp trong bài mẫu:
 
-| **Thành phần** | **Vai trò** |
+| **Thành phần** | **Trách nhiệm** |
 | --- | --- |
-| src/Session.php | Đã cấp. Khởi tạo phiên, Cookie phiên và token bảo vệ form. |
-| src/Draft.php | Bạn đọc và sửa. Hàm lưu, kiểm tra tuổi và xóa bản nháp. |
-| public/register.php | Bạn đọc và sửa. Nhận form, lưu nháp, chuyển trang. |
-| public/confirm.php | Bạn đọc và sửa. Đọc nháp để xem lại, sửa hoặc hủy. |
-| public/complete.php | Bạn đọc và sửa. Kết thúc mô phỏng, xóa nháp rồi chuyển sang trang kết quả. |
-| public/cancel.php | Bạn đọc và sửa. Xử lý nút hủy bằng POST. |
-| public/preferences.php | Bạn đọc và sửa. Lưu tùy chọn xem vào Cookie. |
+| database/schema.sql | Tạo hai bảng và ba sự kiện mẫu. |
+| src/Database.php | Đã cấp. Mở kết nối và thực thi SQL có tham số. |
+| src/RegistrationRepository.php | Bạn đọc và sửa. Lưu đăng ký và đọc danh sách theo sự kiện. |
+| demo-db.php | Bạn đọc và sửa. Kiểm tra CSDL qua dòng lệnh trước khi nối Web. |
+| public/complete.php | Bạn đọc và sửa. Thay hoàn tất mô phỏng bằng lưu CSDL. |
+| tests/integration.php | Kiểm thử thực sự bằng PostgreSQL, có rollback dữ liệu test. |
 
-Session của mẫu lưu draft gồm data (thông tin đăng ký) và created\_at (thời điểm tạo). Cookie view chỉ có giá trị compact hoặc full. Không lưu họ tên, email, mật khẩu hoặc quyền quản trị trong Cookie tùy chọn.
+Bảng events có một hàng cho mỗi sự kiện. Bảng registrations có nhiều hàng tham chiếu đến events.id. Khóa ngoại ngăn lưu đăng ký cho một sự kiện không tồn tại; ràng buộc duy nhất ngăn cùng email chiếm nhiều đăng ký trong cùng sự kiện \[PG-CONSTRAINT\].
+
+Hình chỉ mô tả nhánh tạo mới/trùng; lỗi kết nối hoặc truy vấn được xử lý riêng, không quy thành DUPLICATE.
 
 ## IV. HƯỚNG DẪN THỰC HÀNH
 
-### Bước 1. Đọc tệp khởi tạo phiên đã cấp
+### Bước 1. Đọc schema, chạy và kiểm tra bảng
 
-Mở src/Session.php. Tệp gọi session\_start() trước khi gửi HTML. Sau đó PHP đọc hoặc ghi dữ liệu bằng $\_SESSION. Trình duyệt nhận Cookie chứa định danh phiên; dữ liệu bản nháp nằm phía máy chủ \[PHP-SESSION\].
+Mở database/schema.sql. Nội dung đã cấp:
 
-Tệp đã có hàm checkCsrf và trường csrf ẩn trong Form. Giữ các thành phần này khi sửa bài: chúng đối chiếu token của yêu cầu với token trong phiên. Giảng viên giới thiệu cơ chế hoạt động; bài chưa yêu cầu xây dựng chức năng đăng nhập.
+```sql
+-- Chạy trong database lab riêng; không dùng database production.
+CREATE TABLE IF NOT EXISTS events (
+    id integer PRIMARY KEY,
+    title varchar(160) NOT NULL,
+    category varchar(30) NOT NULL,
+    capacity integer NOT NULL CHECK (capacity > 0)
+);
+CREATE TABLE IF NOT EXISTS registrations (
+    id bigserial PRIMARY KEY,
+    event_id integer NOT NULL REFERENCES events(id),
+    name varchar(120) NOT NULL CHECK (length(trim(name)) > 0),
+    email varchar(200) NOT NULL CHECK (email = lower(trim(email))),
+    created_at timestamptz NOT NULL DEFAULT now(),
+    UNIQUE (event_id, email)
+);
+INSERT INTO events (id,title,category,capacity) VALUES
+(1,'PHP Open Day','tech',10),(2,'Design Workshop','design',5),
+(3,'Git Clinic','tech',20) ON CONFLICT (id) DO NOTHING;
+```
+
+PRIMARY KEY định danh hàng; REFERENCES tạo quan hệ; NOT NULL không chấp nhận giá trị thiếu; CHECK kiểm soát điều kiện dữ liệu; UNIQUE(event\_id, email) áp dụng cho cặp hai cột, không phải mỗi cột riêng.
+
+Các câu CREATE TABLE IF NOT EXISTS phục vụ khởi tạo; chúng không tự cập nhật cấu trúc một bảng đã có phiên bản khác. Trong phạm vi lab, dùng một database mới dành riêng cho bài; không coi script này là hệ thống migration hoàn chỉnh.
+
+Chạy:
+
+```bash
+bash lab.sh sql
+# Trong cửa sổ psql vừa mở, gõ:
+```
+
+```sql
+\i database/schema.sql
+SELECT id, title FROM events ORDER BY id;
+\q
+```
+
+```bash
+bash lab.sh sql
+```
+
+```sql
+SELECT COUNT(*) FROM registrations;
+\q
+```
+
+Có 3 sự kiện. Trong database mới, số đăng ký bằng 0. Nếu đã chạy demo, số có thể khác; không tự xóa dữ liệu để làm giống ảnh mẫu.
+
+Đầu tệp src/Database.php đã có phần nạp .local/db.json và thiết lập biến kết nối. Giữ nguyên phần này khi đối chiếu mã minh họa. Nội dung thực hành tập trung vào pgsql, truy vấn tham số, ràng buộc và lưu/đọc dữ liệu.
 
 Kiểm tra kết quả bước 1:
 
-- [ ] Session được mở trước HTML; phần token đã cấp được giữ nguyên.
+- [ ] Schema chạy trong CSDL lab riêng; events/registrations và ràng buộc được giải thích.
 
-### Bước 2. Tạo các hàm quản lý bản nháp
+### Bước 2. Hiểu kết nối PHP được cấp
 
-Mở src/Draft.php và đối chiếu với mã dưới đây. Nếu viết lại tệp, thay nội dung hiện tại; tránh khai báo trùng hàm hoặc lớp:
+Mở src/Database.php. Đầu tệp đã đọc .local/db.json rồi đặt PGHOST, PGPORT, PGDATABASE, PGUSER và PGPASSWORD. Giữ phần đó; đoạn dưới chỉ trích hai hàm kết nối và truy vấn, không thay toàn bộ tệp bằng đoạn trích.
 
 ```php
 <?php
 declare(strict_types=1);
-function saveDraft(array &$session, array $data, int $now): void {
-    $session['draft'] = ['data'=>$data, 'created_at'=>$now];
-    unset($session['completed']);
+function db(): PgSql\Connection {
+    if (!extension_loaded('pgsql')) { throw new RuntimeException('PGSQL_EXTENSION_MISSING'); }
+    foreach (['PGHOST','PGDATABASE','PGUSER'] as $key) {
+        if (!getenv($key)) { throw new RuntimeException('DATABASE_CONFIG_MISSING'); }
+    }
+    // libpq đọc PGHOST, PGPORT, PGDATABASE, PGUSER, PGPASSWORD từ môi trường.
+    $connection = @pg_connect('connect_timeout=3');
+    if (!$connection) { throw new RuntimeException('DATABASE_UNAVAILABLE'); }
+    return $connection;
 }
-function draftExpired(array $session, int $now, int $ttl): bool {
-    if (!isset($session['draft'])) { return true; }
-    return $now - $session['draft']['created_at'] >= $ttl;
+function queryParams(PgSql\Connection $connection, string $sql, array $params): PgSql\Result {
+    $result = @pg_query_params($connection, $sql, $params);
+    if ($result === false) { throw new RuntimeException('DATABASE_OPERATION_FAILED'); }
+    return $result;
 }
-function cancelDraft(array &$session): void { unset($session['draft']); }
 ```
 
-&amp;$session nhận tham chiếu để thay đổi mảng ở nơi gọi; khi truyền $\_SESSION, thay đổi được giữ trong phiên. Hàm saveDraft lưu dữ liệu và thời điểm tạo, đồng thời xóa kết quả hoàn tất cũ. unset chỉ xóa khóa được chỉ định, không xóa mọi dữ liệu của phiên.
+Hàm db kiểm tra extension và cấu hình trước, sau đó pg\_connect dùng các biến môi trường đã khai báo. Kết nối giới hạn thời gian chờ. Khi thất bại, hàm ném lỗi để nơi gọi xử lý; không in mật khẩu hoặc chuỗi kết nối ra trình duyệt.
 
-$now - created\_at là tuổi bản nháp tính bằng giây. Bản nháp hết hạn khi tuổi lớn hơn hoặc bằng $ttl. Nhận $now qua tham số giúp kiểm thử thời gian giả lập mà không phải chờ thật 30 phút.
+queryParams là hàm hỗ trợ gọi pg\_query\_params. SQL và dữ liệu được truyền tách biệt. Các vị trí $1, $2, $3 trong chuỗi SQL tương ứng phần tử 1, 2, 3 của mảng tham số; đây là cú pháp tham số PostgreSQL, không phải biến PHP nội suy \[PHP-PG\].
 
-Mẫu dùng dữ liệu bản nháp do chính ứng dụng tạo nên hàm kiểm tra còn đơn giản. Phần tự làm sẽ xử lý dữ liệu thiếu, sai sự kiện và thời điểm không hợp lệ.
+Phần này tiếp nối pg\_connect ở slide 10. PDO ở slide 17 là phương án khác; bài chính chỉ dùng một cách để tránh trộn nhiều API trong cùng thời lượng.
 
 Kiểm tra kết quả bước 2:
 
-- [ ] Nháp gồm data/created\_at; lưu nháp mới xóa kết quả hoàn tất cũ.
+- [ ] db() mở kết nối; queryParams tách SQL và giá trị, không ghép chuỗi đầu vào.
 
-### Bước 3. Tạo trang nhập và lưu nháp
+### Bước 3. Tạo lớp chịu trách nhiệm lưu và đọc đăng ký
 
-Mở public/register.php:
+Mở src/RegistrationRepository.php và đối chiếu với mã dưới đây. Nếu viết lại tệp, thay nội dung hiện tại; tránh khai báo trùng hàm hoặc lớp:
 
 ```php
 <?php
-require __DIR__.'/../src/Session.php';
-require __DIR__.'/../src/Input.php';
-require __DIR__.'/../src/Draft.php';
-$events = require __DIR__.'/../data/events.php';
-$errors = [];
-$data = $_SESSION['draft']['data'] ?? ['event_id'=>1,'name'=>'','email'=>''];
-if ($_SERVER['REQUEST_METHOD'] === 'POST') {
-    checkCsrf($_POST);
-    $result = validateRegistration($_POST, $events);
-    $errors = $result['errors']; $data = $result['data'];
-    if (!$errors) {
-        saveDraft($_SESSION, $data, time());
-        header('Location: /confirm.php', true, 303); exit;
+declare(strict_types=1);
+require_once __DIR__.'/Database.php';
+final class RegistrationRepository {
+    public function __construct(private PgSql\Connection $connection) {}
+    public function save(int $eventId, string $name, string $email): string {
+        $email = strtolower(trim($email));
+        $name = trim($name);
+        if ($eventId <= 0 || $name === '' || strlen($name)>120
+            || str_contains($name, "\0") || strlen($email)>200
+            || !filter_var($email, FILTER_VALIDATE_EMAIL)) {
+            throw new InvalidArgumentException('REGISTRATION_INVALID');
+        }
+        $result = queryParams($this->connection,
+            'INSERT INTO registrations (event_id,name,email) VALUES ($1,$2,$3)
+             ON CONFLICT (event_id,email) DO NOTHING RETURNING id',
+            [$eventId, $name, $email]);
+        return pg_num_rows($result) === 1 ? 'CREATED' : 'DUPLICATE';
+    }
+    public function listForEvent(int $eventId): array {
+        $result = queryParams($this->connection,
+            'SELECT id,event_id,name,email FROM registrations WHERE event_id=$1 ORDER BY id',
+            [$eventId]);
+        return pg_fetch_all($result) ?: [];
     }
 }
-require __DIR__.'/../templates/header.php';
-?>
-<div class="page-heading">
-<h1>Bước 1. Nhập thông tin</h1>
-<p>Điền thông tin để chuyển đến bước xem lại bản nháp.</p>
-</div>
-<div class="error-summary" role="alert">
-<p class="error-messages"><?= e(implode(', ', $errors)) ?></p>
-<p>Thông tin chưa hợp lệ. Kiểm tra lại các thông tin đã nhập rồi gửi lại.</p>
-</div>
-<form class="registration-form" method="post">
-<input type="hidden" name="csrf" value="<?= e($_SESSION['csrf']) ?>">
-<label class="form-field" for="event_id">Sự kiện
-<select id="event_id" name="event_id">
-<?php foreach($events as $event): ?>
-<option value="<?= $event['id'] ?>" <?= (int)$data['event_id']===$event['id']?'selected':'' ?>>
-<?= e($event['title']) ?>
-</option>
-<?php endforeach; ?>
-</select>
-</label>
-<label class="form-field" for="name">Họ tên
-<input id="name" name="name" value="<?= e($data['name']) ?>">
-</label>
-<label class="form-field" for="email">Email
-<input id="email" name="email" value="<?= e($data['email']) ?>">
-</label>
-<button>Tiếp tục</button>
-</form>
-<form class="preferences-form" method="post" action="/preferences.php">
-<h2>Tùy chọn hiển thị</h2>
-<p>Form này chỉ lưu tùy chọn Cookie, không gửi đăng ký.</p>
-<input type="hidden" name="csrf" value="<?= e($_SESSION['csrf']) ?>">
-<label class="form-field" for="view">Cách hiển thị
-<select id="view" name="view">
-<option value="compact">Gọn</option>
-<option value="full">Đầy đủ</option>
-</select>
-</label>
-<button class="button-secondary">Lưu tùy chọn</button>
-</form>
-<p class="cookie-status">Tùy chọn Cookie: <?= e(field($_COOKIE, 'view')) ?>
-</p>
-<?php require __DIR__.'/../templates/footer.php'; ?>
 ```
 
-Đọc phần PHP đầu tệp: nếu đã có nháp thì lấy dữ liệu điền lại form; nếu chưa có thì dùng giá trị rỗng. Khi POST, kiểm tra token trước, sau đó dùng hàm kiểm tra dữ liệu trong src/Input.php được cấp. Chỉ khi không có lỗi mới gọi saveDraft.
+Giải thích phương thức \`save\`: chuẩn hóa email theo quy ước mẫu; kiểm tra dữ liệu; truyền ba giá trị vào SQL; lấy ID vừa tạo. ON CONFLICT (event\_id,email) DO NOTHING không chèn khi trùng cặp khóa; RETURNING id trả một hàng khi tạo được. Từ đó phương thức phân biệt CREATED với DUPLICATE.
 
-header('Location: /confirm.php', true, 303) yêu cầu trình duyệt chuyển sang GET trang xác nhận. exit ngăn chương trình tiếp tục xuất HTML sau khi đã chuyển hướng. Không đặt dòng echo hoặc HTML trước phần xử lý này.
+Chỉ kiểm tra trùng bằng SELECT trước INSERT chưa bảo vệ được tình huống hai request cùng kiểm tra trước khi một request kịp chèn. Vì vậy ràng buộc duy nhất cần nằm trong CSDL. Bài này không giải quyết tất cả các trường hợp đồng thời của hệ thống sự kiện.
 
-Form sử dụng trường ẩn csrf; giá trị lấy từ Session. Form nhỏ thứ hai chỉ lưu tùy chọn hiển thị, không gửi đăng ký. Trang nhận dữ liệu của form này được xây dựng ở bước 7.
+Giải thích phương thức \`listForEvent\`: lọc theo $1, sắp xếp ID để kết quả ổn định và trả mảng. Định nghĩa private ... $connection trong tham số constructor là cách PHP khai báo/gán thuộc tính; có thể hiểu tương đương khai báo thuộc tính riêng rồi gán $this-&gt;connection trong hàm khởi tạo.
 
 Kiểm tra kết quả bước 3:
 
-- [ ] Nhập hợp lệ chuyển đến xác nhận; quay lại sửa thấy đúng dữ liệu nháp.
+- [ ] save trả CREATED hoặc DUPLICATE; lỗi không thuộc trùng khóa không được coi là DUPLICATE.
 
-### Bước 4. Tạo trang xác nhận
+### Bước 4. Tạo chương trình demo trước khi nối giao diện
 
-Mở public/confirm.php:
+Mở demo-db.php và đối chiếu với mã dưới đây. Nếu viết lại tệp, thay nội dung hiện tại; tránh khai báo trùng hàm hoặc lớp:
 
 ```php
 <?php
-require __DIR__.'/../src/Session.php';
-require __DIR__.'/../src/Input.php';
-require __DIR__.'/../src/Draft.php';
-if (draftExpired($_SESSION, time(), 1800)) {
-    cancelDraft($_SESSION);
-    header('Location: /register.php', true, 303); exit;
+require __DIR__.'/src/RegistrationRepository.php';
+try {
+    $repo = new RegistrationRepository(db());
+    echo $repo->save(1, "O'Neil Demo", 'demo@example.test') . "\n";
+    echo json_encode($repo->listForEvent(1), JSON_PRETTY_PRINT | JSON_UNESCAPED_UNICODE) . "\n";
+} catch (Throwable $e) {
+    fwrite(STDERR, 'Database demo failed. Check lab configuration.\n'); exit(1);
 }
-$data = $_SESSION['draft']['data'];
-require __DIR__.'/../templates/header.php';
-?>
-<div class="page-heading">
-<h1>Bước 2. Xác nhận</h1>
-<p>Đối chiếu thông tin trước khi xác nhận.</p>
-</div>
-<section class="confirmation" aria-label="Thông tin đăng ký">
-<dl class="summary-list">
-<div>
-<dt>Họ tên</dt>
-<dd><?= e($data['name']) ?></dd>
-</div>
-<div>
-<dt>Email</dt>
-<dd><?= e($data['email']) ?></dd>
-</div>
-</dl>
-<div class="confirmation-actions">
-<a href="/register.php">Sửa lại</a>
-<form method="post" action="/complete.php">
-<input type="hidden" name="csrf" value="<?= e($_SESSION['csrf']) ?>">
-<button>Xác nhận</button>
-</form>
-<form method="post" action="/cancel.php">
-<input type="hidden" name="csrf" value="<?= e($_SESSION['csrf']) ?>">
-<button class="button-secondary button-cancel">Hủy bản nháp</button>
-</form>
-</div>
-</section>
-<?php require __DIR__.'/../templates/footer.php'; ?>
 ```
 
-Nếu chưa có nháp hoặc nháp đã hết 1.800 giây, trang đưa người dùng về form. Nhờ đó không thể gõ thẳng URL xác nhận khi chưa nhập thông tin. Với nháp còn hiệu lực, trang chỉ đọc và hiển thị.
+Trong terminal tại Ma\_nguon, sau khi đã lưu cấu hình, chạy hai lần:
 
-Nút Sửa lại là liên kết GET vì chỉ mở form. Hai nút Xác nhận và Hủy là form POST vì làm thay đổi trạng thái. Không bỏ e khi hiển thị họ tên hoặc email đã lưu.
+```bash
+php demo-db.php
+php demo-db.php
+```
+
+Với database mới, lần đầu có CREATED; lần hai có DUPLICATE. Phần JSON in danh sách của sự kiện 1. Nếu dữ liệu demo đã tồn tại, cả hai có thể là DUPLICATE; đó không phải lỗi.
+
+Kiểm tra bằng SQL, không chỉ nhìn thông báo PHP:
+
+```bash
+bash lab.sh sql
+```
+
+```sql
+SELECT event_id,email,COUNT(*) FROM registrations GROUP BY event_id,email;
+\q
+```
+
+Truy vấn cần cho thấy đúng một bản ghi của demo@example.test tại sự kiện 1. Đối chiếu số hàng trong cơ sở dữ liệu với thông báo của chương trình.
 
 Kiểm tra kết quả bước 4:
 
-- [ ] Không có nháp hoặc nháp hết hạn thì quay về nhập, không xác nhận được.
+- [ ] Chạy demo hai lần có đúng một hàng theo cặp sự kiện–email; có SELECT kiểm chứng.
 
-### Bước 5. Tạo bước hoàn tất mô phỏng
+### Bước 5. Nối bước xác nhận với lớp lưu dữ liệu
 
-Mở public/complete.php:
+Mở public/complete.php và đối chiếu nội dung dưới đây. Các trang nhập và xác nhận đã có đầy đủ trong Ma\_nguon của bài:
 
 ```php
 <?php
 require __DIR__.'/../src/Session.php';
 require __DIR__.'/../src/Input.php';
 require __DIR__.'/../src/Draft.php';
+require __DIR__.'/../src/RegistrationRepository.php';
+$error = '';
 if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     checkCsrf($_POST);
-    if (draftExpired($_SESSION, time(), 1800)) {
-        cancelDraft($_SESSION);
-        header('Location: /register.php', true, 303); exit;
+    if (draftExpired($_SESSION,time(),1800)) {
+        cancelDraft($_SESSION); header('Location: /register.php',true,303); exit;
     }
-    $_SESSION['completed'] = 'SIMULATED_OK';
-    cancelDraft($_SESSION);
-    header('Location: /complete.php', true, 303); exit;
+    try {
+        $data = $_SESSION['draft']['data'];
+        $repo = new RegistrationRepository(db());
+        $_SESSION['completed'] = $repo->save($data['event_id'],$data['name'],$data['email']);
+        cancelDraft($_SESSION);
+        header('Location: /complete.php',true,303); exit;
+    } catch (Throwable $ex) {
+        error_log('CommunityPass: registration_save_failed');
+        http_response_code(503); $error = 'Không lưu được. Bản nháp vẫn được giữ để thử lại.';
+    }
 }
-if (!isset($_SESSION['completed'])) {
-    header('Location: /register.php', true, 303); exit;
+if ($error === '' && !isset($_SESSION['completed'])) {
+    header('Location: /register.php',true,303); exit;
 }
 require __DIR__.'/../templates/header.php';
 ?>
 <div class="page-heading">
-<h1>Bước 3. Hoàn tất mô phỏng</h1>
+<h1>Kết quả lưu trữ</h1>
 </div>
 <section class="completion" role="status">
 <p class="status-message">
-<?= e($_SESSION['completed']) ?>
+    <?= e($error !== '' ? $error : $_SESSION['completed']) ?>
 </p>
-<p>Chưa ghi vào CSDL; đây không phải vé hoặc bằng chứng đăng ký thật.</p>
+<p>Mẫu Lab 05 kiểm tra lưu bền vững và đăng ký trùng; chưa có giới hạn chỗ đồng thời.</p>
+<a href="/confirm.php">Quay lại xác nhận</a>
 </section>
-<?php require __DIR__.'/../templates/footer.php'; ?>
-```
+<?php require __DIR__ . '/../templates/footer.php'; ?>```
 
-POST hợp lệ tạo dấu SIMULATED\_OK trong Session, xóa bản nháp, rồi chuyển sang GET cùng trang. Làm mới trang kết quả sẽ không gửi lại POST. Nếu gõ trực tiếp URL mà chưa hoàn tất, mẫu đưa về form.
+Phần lưu dữ liệu nằm trong khối try: lấy nháp từ Session → tạo đối tượng lưu trữ → gọi save → chỉ sau khi có kết quả mới xóa nháp. Khi gặp lỗi database, giữ nháp để người dùng có thể thử lại và trả thông báo chung.
 
-Đây là luồng POST → chuyển hướng → GET. Nó giúp tránh một số hành vi gửi lại form do tải lại trang; không được coi là cơ chế bảo đảm mọi thao tác ghi dữ liệu không bao giờ lặp. Khi có thao tác ghi CSDL, cần kiểm tra thêm ràng buộc dữ liệu.
+Giữ các bước kiểm tra POST, token và chuyển hướng. Các câu SQL được đặt trong lớp lưu trữ để tách việc truy cập cơ sở dữ liệu khỏi xử lý giao diện.
 
 Kiểm tra kết quả bước 5:
 
-- [ ] Hoàn tất mô phỏng cho kết quả trong phiên; hiểu rằng chưa tạo hàng CSDL.
+- [ ] complete.php chỉ xóa nháp sau kết quả lưu hợp lệ; lỗi giữ nháp.
 
-### Bước 6. Tạo xử lý hủy
+### Bước 6. Kiểm tra chức năng Web với PostgreSQL
 
-Mở public/cancel.php:
-
-```php
-<?php
-require __DIR__.'/../src/Session.php';
-require __DIR__.'/../src/Draft.php';
-if ($_SERVER['REQUEST_METHOD'] !== 'POST') { http_response_code(405); exit('POST_REQUIRED'); }
-checkCsrf($_POST);
-cancelDraft($_SESSION);
-header('Location: /register.php', true, 303); exit;
-```
-
-Mã chỉ nhận POST, kiểm tra token rồi xóa khóa bản nháp. Không gọi session\_destroy() vì ta không muốn xóa token và mọi trạng thái khác của phiên chỉ để hủy một form.
-
-Kiểm tra kết quả bước 6:
-
-- [ ] Hủy xóa nháp và quay lại nhập; không xóa toàn bộ dữ liệu phiên.
-
-### Bước 7. Ghi và đọc Cookie tùy chọn
-
-Mở public/preferences.php:
-
-```php
-<?php
-require __DIR__.'/../src/Session.php';
-if ($_SERVER['REQUEST_METHOD'] !== 'POST') { http_response_code(405); exit('POST_REQUIRED'); }
-checkCsrf($_POST);
-$view = $_POST['view'] ?? '';
-if (!is_string($view) || !in_array($view, ['compact', 'full'], true)) {
-    http_response_code(422); exit('VIEW_INVALID');
-}
-setcookie('view', $view, ['expires'=>time()+3600, 'path'=>'/', 'httponly'=>true,
-    'samesite'=>'Lax', 'secure'=>isset($_SERVER['HTTPS']) && $_SERVER['HTTPS'] !== 'off']);
-header('Location: /register.php', true, 303); exit;
-```
-
-Cookie tồn tại một giờ và áp dụng cho đường dẫn /. Giá trị chỉ được chọn trong hai lựa chọn đã công bố. Sau setcookie, trình duyệt nhận Cookie rồi gửi lại trong request tiếp theo; việc chuyển hướng giúp trang form đọc được giá trị mới qua $\_COOKIE.
-
-Trong giao diện mẫu, lựa chọn được hiển thị bằng dòng “Tùy chọn Cookie”; chưa thay toàn bộ cách bố trí giao diện. Các thuộc tính httponly, samesite và secure được cấp sẵn. secure bật khi chạy HTTPS; môi trường HTTP cục bộ không được đặt Secure cố định, nếu không trình duyệt sẽ không gửi Cookie đó qua HTTP.
-
-Kiểm tra kết quả bước 7:
-
-- [ ] Cookie chỉ chứa compact/full và đọc được ở request tiếp theo; không lưu thông tin nhạy cảm.
-
-Kết quả sau phần hướng dẫn: Hoàn tất hợp lệ có SIMULATED\_OK; hủy xóa nháp. bash lab.sh test: TESTS=6 FAILED=0. Chưa ghi CSDL.
-
-## V. LỖI THƯỜNG GẶP VÀ CÁCH KHẮC PHỤC
+Dừng các máy chủ PHP cũ. Trong terminal tại thư mục dự án của bài, chạy:
 
 ```bash
-php tests/run.php
 bash lab.sh run
 ```
 
-Nếu máy chủ cũ còn chạy, dùng terminal thứ hai để chạy test hoặc dừng bằng Ctrl+C. Mở đúng địa chỉ của bài thực hành.
+Mở /register.php, chọn sự kiện 1, nhập tên giả lập và email khác demo, đi qua trang xác nhận rồi hoàn tất. Kết quả lần đầu là CREATED. Đăng ký lại cùng thông tin có DUPLICATE. Đổi sự kiện hoặc email có thể tạo một hàng mới theo ràng buộc đã công bố.
 
-| **Phép thử** | **Kết quả cần thấy** |
+Dừng rồi khởi chạy lại máy chủ PHP, sau đó truy vấn bằng psql để kiểm tra bản ghi. Dữ liệu trong cơ sở dữ liệu vẫn tồn tại sau khi kết thúc máy chủ PHP. Do mẫu chưa có phân quyền quản trị, chỉ chạy cục bộ với dữ liệu giả lập.
+
+Kiểm tra kết quả bước 6:
+
+- [ ] Đăng ký được lưu vào cơ sở dữ liệu và còn tồn tại sau khi khởi động lại máy chủ PHP.
+
+### Bước 7. Chạy kiểm thử tích hợp
+
+```bash
+php tests/run.php
+bash lab.sh test
+```
+
+Bộ tích hợp tạo sự kiện thử riêng, kiểm tra lưu/trùng/dấu nháy/danh sách rồi rollback. Khi đủ môi trường, cần TESTS=7 FAILED=0. Nếu có NOT\_RUN, nghĩa là chưa thực thi kiểm thử do thiếu kết nối/cấu hình; không coi đó là PASS.
+
+Báo cáo kiểm tra môi trường biên soạn được lưu trong tài liệu giảng viên. Phần tích hợp PostgreSQL cần được chạy và xác nhận trên máy giảng viên trước khi sử dụng trong lớp.
+
+Kiểm tra kết quả bước 7:
+
+- [ ] Chạy cả test cơ bản/tích hợp; nếu thiếu CSDL ghi NOT\_RUN, không tự báo đạt.
+
+Kết quả sau phần hướng dẫn: Tạo lần đầu: CREATED; lặp cùng email/sự kiện: DUPLICATE. Sau khi đủ môi trường, test in TESTS=6 FAILED=0 và TESTS=7 FAILED=0.
+
+## V. LỖI THƯỜNG GẶP VÀ CÁCH KHẮC PHỤC
+
+| **Lỗi/hiện tượng** | **Cách xử lý** |
 | --- | --- |
-| Nhập hợp lệ → Tiếp tục | Sang xác nhận, thông tin đúng. |
-| Sửa lại → thay họ tên → Tiếp tục | Xác nhận dùng tên mới. |
-| Hủy bản nháp | Trở về form; không giữ bản nháp vừa hủy. |
-| Xác nhận → tải lại trang | Vẫn SIMULATED\_OK, không cần gửi lại form. |
-| Mở xác nhận trong cửa sổ riêng tư mới | Bị đưa về form vì phiên mới chưa có nháp. |
-| Lưu tùy chọn compact | Request tiếp theo hiển thị Cookie compact. |
+| Thiếu pgsql | So phiên bản php -v với extension đã cài; chạy php -m. |
+| Database không kết nối | Kiểm tra dịch vụ, user/database lab, mật khẩu. Chạy bash lab.sh db-config nếu cần sửa cấu hình cục bộ. |
+| Không có bảng | Chạy schema trong đúng database; xác minh current\_database(). |
+| DUPLICATE ngay lần chạy thử đầu tiên | Có thể dữ liệu demo đã tồn tại từ lần trước; kiểm tra SQL trước khi kết luận. |
+| Chạy demo được nhưng Web lỗi | Kiểm tra đang chạy đúng bản Lab05 và .local/db.json của bản đó; dừng PHP rồi chạy lại sau khi sửa cấu hình. |
+| Test ghi NOT\_RUN | Sửa điều kiện chạy, chạy lại; không sửa test để tự báo đạt. |
 
-Hai tab trong cùng trình duyệt thường dùng chung Cookie phiên; không dùng hai tab để chứng minh hai người dùng độc lập. Dùng cửa sổ riêng tư hoặc trình duyệt khác. Giữ token bảo vệ biểu mẫu và thông tin cá nhân trong môi trường thực hành.
-
-| **Lỗi** | **Cách kiểm tra** |
-| --- | --- |
-| Headers already sent | Có khoảng trắng/BOM/HTML trước session\_start hoặc header không? |
-| CSRF\_INVALID | Có giữ trường hidden csrf và dùng cùng phiên không? Tải lại form để nhận token hợp lệ, không tắt kiểm tra. |
-| Sửa lại nhưng mất dữ liệu | Xem dữ liệu được lấy từ $\_SESSION\['draft'\]\['data'\] và truyền vào giá trị input chưa. |
-| Cookie chưa có ngay sau khi ghi | Đọc ở request tiếp theo; giữ chuyển hướng sau setcookie. |
-
-## VI. BÀI TẬP MỞ RỘNG: KIỂM TRA BẢN NHÁP TRƯỚC KHI HOÀN TẤT
+## VI. BÀI TẬP MỞ RỘNG: THỐNG KÊ ĐĂNG KÝ THEO SỰ KIỆN
 
 ```bash
 # Vẫn đứng trong Ma_nguon của bài này.
 bash lab.sh extend
 ```
 
-Hoàn thiện hàm canComplete trong src/DraftGuard.php. Kiểm thử hàm trước, sau đó tích hợp vào trang hoàn tất theo hướng dẫn dưới đây.
+Hoàn thiện src/RegistrationStats.php để nhận ID sự kiện và trả event\_id, title, total. Sự kiện không tồn tại trả mảng rỗng; sự kiện tồn tại nhưng chưa có đăng ký phải trả tổng 0.
 
-Hàm nhận mảng Session, ID sự kiện đang yêu cầu, thời gian hiện tại và thời gian sống. Chỉ trả true khi có bản nháp hợp lệ, đúng sự kiện, chưa hết hạn, thời điểm tạo không ở tương lai và thời gian sống lớn hơn 0. Thời điểm đúng ngưỡng hết hạn phải trả false.
+Dùng truy vấn có tham số, không ghép ID trực tiếp vào SQL. Gợi ý: bắt đầu từ bảng sự kiện, kết hợp đăng ký bằng LEFT JOIN, đếm khóa đăng ký thay vì COUNT(\*) để phân biệt không có đăng ký. Xem lược đồ trong phần hướng dẫn, tự viết câu SQL.
 
-Chạy bash lab.sh extend để kiểm tra 7 ca mở rộng; chạy lại bash lab.sh test để kiểm tra chức năng cũ. Bộ kiểm thử sử dụng now=1300, created\_at=1000, ttl=300 cho trường hợp đúng ngưỡng hết hạn, nên không cần chờ thời gian thực.
-
-### Nối hàm kiểm tra vào bước hoàn tất
-
-Sau khi bash lab.sh extend đạt, mở public/confirm.php. Trong form action="/complete.php", ngay sau trường ẩn csrf, thêm trường ID sự kiện:
-
-```php
-<input type="hidden" name="event_id"
-       value="<?= (int)$data['event_id'] ?>">
-```
-
-Không thêm trường này vào form hủy. Trình duyệt gửi ID để hàm đối chiếu với bản nháp phía máy chủ; trường ẩn không phải bằng chứng quyền truy cập. Nếu thiếu trường, hàm nhận ID 0 và từ chối ngay cả đăng ký hợp lệ.
-
-Tiếp theo mở public/complete.php. Thêm ngay sau các dòng require:
-
-```php
-require __DIR__.'/../src/DraftGuard.php';
-```
-
-Trong nhánh POST, giữ checkCsrf($\_POST). Thay điều kiện kiểm tra bản nháp trước khi hoàn tất bằng điều kiện gọi hàm vừa viết:
-
-```php
-if (!canComplete($_SESSION, (int)field($_POST, 'event_id'), time(), 1800)) {
-    cancelDraft($_SESSION);
-    header('Location: /register.php', true, 303);
-    exit;
-}
-```
-
-Giữ nguyên phần hoàn tất mô phỏng phía sau. Gửi form xác nhận hợp lệ phải đến trang hoàn tất; yêu cầu sai sự kiện hoặc bản nháp hết hạn phải quay lại form. Thử bằng dữ liệu giả trên máy học tập.
+Chạy bash lab.sh extend trên PostgreSQL, sau đó chạy bash lab.sh test để kiểm tra các chức năng đã có. Phần nâng cao: phân tích phương án kiểm soát sức chứa khi nhiều yêu cầu đăng ký được gửi đồng thời; không bắt buộc triển khai trong thời gian làm bài mở rộng.
 
 ## KẾT QUẢ CỦA BÀI THỰC HÀNH
 
-Có luồng nhập, xem lại, sửa, hủy và hoàn tất mô phỏng; bản nháp sai hoặc hết hạn bị từ chối; các phiên sử dụng và tùy chọn giao diện tách biệt.
+Có luồng Form lưu đăng ký thật, chống trùng theo sự kiện–email, tra cứu danh sách và thống kê cả sự kiện chưa có người đăng ký.
 
 ## VII. BẢNG KIỂM HOÀN THÀNH
 
-- [ ] Tải lại trang xác nhận giữ đúng bản nháp còn hạn.
-- [ ] Sửa và hủy không làm thay đổi phiên của người khác.
-- [ ] Nháp hết hạn/sai sự kiện không hoàn tất được.
-- [ ] Yêu cầu thiếu token bị từ chối; Cookie giữ đúng tùy chọn.
-- [ ] test và extend đạt; luồng Web thực sự gọi kiểm tra bản nháp.
+- [ ] Kết nối tới CSDL thực hành riêng; schema và dữ liệu mẫu đã được tạo.
+- [ ] Lưu lần đầu CREATED, lặp cùng email/sự kiện DUPLICATE.
+- [ ] Tên chứa dấu nháy được lưu và đọc lại nguyên vẹn.
+- [ ] Thống kê chưa có người trả total=0; ID thiếu trả mảng rỗng.
+- [ ] test và extend đạt; khởi động lại PHP không làm mất bản ghi.
 
-Kết quả tổng hợp của phần tự làm phải có TESTS=7 FAILED=0. Ngoài các phép thử tự động, thực hiện các tình huống kiểm tra trực tiếp nêu trong bài. Lệnh check chỉ xác nhận môi trường, không thay cho test và extend.
+Kết quả tổng hợp của phần tự làm phải có TESTS=4 FAILED=0. Ngoài các phép thử tự động, thực hiện các tình huống kiểm tra trực tiếp nêu trong bài. Lệnh check chỉ xác nhận môi trường, không thay cho test và extend.
 
 ## VIII. RUBRIC LAB — 10 ĐIỂM
 
 | **Tiêu chí** | **Điểm** | **Cách chấm** |
 | --- | --- | --- |
 | Phần mẫu có hướng dẫn | 2,0 | 1 điểm: thực hiện và có kết quả đúng; 1 điểm: giải thích luồng mã. Mỗi phần đạt một phần: 0,5; chưa đạt: 0. |
-| Kiểm tra bản nháp | 1,5 | Từ chối nháp không tồn tại, hết hạn, sai sự kiện hoặc sai cấu trúc theo yêu cầu. |
-| Tích hợp luồng xác nhận | 1,5 | Gọi phần kiểm tra trước khi hoàn tất; sửa/hủy giữ đúng trạng thái và không ảnh hưởng dữ liệu phiên khác. |
-| Bảo vệ thao tác | 1,0 | Thao tác đổi dữ liệu dùng POST và token được cấp; Cookie tùy chọn không chứa dữ liệu đăng ký hoặc quyền. |
+| Truy vấn thống kê | 1,5 | LEFT JOIN giữ sự kiện chưa có đăng ký; COUNT đúng; lọc theo ID bằng tham số. |
+| Kết quả trả về | 1,5 | Trả đúng event\_id/title/total; total là số nguyên; ID không tồn tại trả mảng rỗng. |
+| Nhất quán dữ liệu | 1,0 | Đăng ký trùng không tăng tổng; xử lý lỗi CSDL riêng, không che lỗi thành kết quả 0. |
 | Kiểm thử và xử lý lỗi | 2,0 | 1 điểm: có dữ liệu và kết quả mong đợi cho tình huống đúng, sai, biên; 1 điểm: chạy lại phần mẫu và mở rộng sau sửa. Mỗi phần đạt một phần: 0,5; chưa đạt: 0. |
 | Mã nguồn và bàn giao | 1,0 | 0,5: nộp đúng tệp, dữ liệu và phiên bản; 0,5: README có lệnh chạy/kiểm thử, không chứa cấu hình riêng. Đạt một phần mỗi mục: 0,25. |
 | Giải thích cá nhân | 1,0 | 0,5: giải thích phần tự viết; 0,5: giải thích một ca lỗi hoặc thực hiện một thay đổi nhỏ. Đạt một phần mỗi mục: 0,25. |
@@ -447,8 +455,8 @@ Với tiêu chí 1,5 điểm: đủ yêu cầu được 1,5; thực hiện một
 
 ## IX. NỘP BÀI
 
-Bước 1. Lưu mã bài mẫu và bài tự làm tại Lab04/Ma\_nguon, kèm dữ liệu, kiểm thử và README. Loại bỏ .local, mật khẩu và dữ liệu cá nhân thật khỏi bài nộp.
+Bước 1. Lưu mã bài mẫu và bài tự làm tại Lab05/Ma\_nguon, kèm dữ liệu, kiểm thử và README. Loại bỏ .local, mật khẩu và dữ liệu cá nhân thật khỏi bài nộp.
 
 Bước 2. Chạy bash lab.sh check, bash lab.sh test và bash lab.sh extend. Thực hiện các phép kiểm tra trực tiếp trong bài và sửa lỗi trước khi nộp.
 
-Bước 3. Commit, đẩy mã lên GitHub và nộp tên nhóm/thành viên, Lab 04, liên kết Ma\_nguon tại đúng commit. Kiểm tra quyền đọc; kèm lần chạy Actions khi được yêu cầu. Hạn và địa chỉ nộp do giảng viên công bố. Nếu nhận ZIP, giữ nguyên cấu trúc trên.
+Bước 3. Commit, đẩy mã lên GitHub và nộp tên nhóm/thành viên, Lab 05, liên kết Ma\_nguon tại đúng commit. Kiểm tra quyền đọc; kèm lần chạy Actions khi được yêu cầu. Hạn và địa chỉ nộp do giảng viên công bố. Nếu nhận ZIP, giữ nguyên cấu trúc trên.

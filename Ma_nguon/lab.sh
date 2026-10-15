@@ -3,8 +3,8 @@
 set -u
 root="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)" || exit 2
 cd "$root" || exit 2
-lesson="4"
-port="8104"
+lesson="5"
+port="8105"
 usage() {
   printf 'Cách dùng: bash lab.sh check | run | test | extend | db-config | sql\n'
   printf 'check: kiểm tra môi trường; run: chạy bài; test: kiểm tra mẫu; extend: kiểm tra mở rộng.\n'

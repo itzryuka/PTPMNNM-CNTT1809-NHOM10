@@ -1,13 +1,17 @@
 <?php
+
 declare(strict_types=1);
-function field(array $input, string $key): string {
+function field(array $input, string $key): string
+{
     $value = $input[$key] ?? '';
     return is_string($value) ? trim($value) : '';
 }
-function e(string $value): string {
+function e(string $value): string
+{
     return htmlspecialchars($value, ENT_QUOTES | ENT_SUBSTITUTE, 'UTF-8');
 }
-function validateRegistration(array $input, array $events): array {
+function validateRegistration(array $input, array $events): array
+{
     $eventId = filter_var(field($input, 'event_id'), FILTER_VALIDATE_INT);
     $name = field($input, 'name');
     $email = strtolower(field($input, 'email')); // Quy ước riêng của mẫu lớp học.
@@ -21,7 +25,9 @@ function validateRegistration(array $input, array $events): array {
     if (!filter_var($email, FILTER_VALIDATE_EMAIL) || strlen($email) > 200) {
         $errors[] = 'EMAIL_INVALID';
     }
-    return ['errors'=>$errors, 'data'=>[
-        'event_id'=>(int)$eventId, 'name'=>$name, 'email'=>$email
+    return ['errors' => $errors, 'data' => [
+        'event_id' => (int)$eventId,
+        'name' => $name,
+        'email' => $email
     ]];
 }
