@@ -1,44 +1,10 @@
-<h2 align="center">
-    <a href="https://dainam.edu.vn/vi/khoa-cong-nghe-thong-tin">
-    🎓 Faculty of Information Technology (DaiNam University)
-    </a>
-</h2>
-<h2 align="center">
-    Open Source Software Development
-</h2>
-<div align="center">
-    <p align="center">
-        <img src="docs/logo/aiotlab_logo.png" alt="AIoTLab Logo" width="170"/>
-        <img src="docs/logo/fitdnu_logo.png" alt="AIoTLab Logo" width="180"/>
-        <img src="docs/logo/dnu_logo.png" alt="DaiNam University Logo" width="200"/>
-    </p>
+# Lab05 — Bài thực hành dành cho sinh viên
 
-[![AIoTLab](https://img.shields.io/badge/AIoTLab-green?style=for-the-badge)](https://www.facebook.com/DNUAIoTLab)
-[![Faculty of Information Technology](https://img.shields.io/badge/Faculty%20of%20Information%20Technology-blue?style=for-the-badge)](https://dainam.edu.vn/vi/khoa-cong-nghe-thong-tin)
-[![DaiNam University](https://img.shields.io/badge/DaiNam%20University-orange?style=for-the-badge)](https://dainam.edu.vn)
+Nhánh này chỉ chứa một bài lab. Dùng Ubuntu/WSL, PHP từ 8.1 và Git.
 
-</div>
+**Trước khi chạy:** làm mục Chuẩn bị riêng cho Lab 05 trong [HUONG_DAN.md](HUONG_DAN.md): cài PostgreSQL và PHP pgsql, tạo CSDL riêng, chạy bash lab.sh db-config rồi tạo schema.
 
-## 🚀 1. Các project đã thực hiện dựa trên Platform
-
-Một số project sinh viên đã thực hiện:
-- #### [Khoá 17](./docs/projects/K17/README.md)
-- #### [Khoá 18]() (Coming soon)
-## 📚 2. Bài thực hành Lab01–Lab05
-
-Mỗi bài nằm trên một nhánh riêng, có tài liệu, mã nguồn mẫu và bộ kiểm thử. Chọn bài trong bảng dưới đây hoặc clone riêng nhánh tương ứng. Các TODO là phần sinh viên cần hoàn thiện.
-
-| Bài | Nội dung | Nhánh | Hướng dẫn đầy đủ |
-| --- | --- | --- | --- |
-| Lab01 | Linux và shell script | [lab1](https://github.com/FIT-DNU/Open-Source-Software-Development/tree/lab1) | [Hướng dẫn Lab01](https://github.com/FIT-DNU/Open-Source-Software-Development/blob/lab1/HUONG_DAN.md) |
-| Lab02 | Module PHP kiểm tra điều kiện đăng ký | [lab2](https://github.com/FIT-DNU/Open-Source-Software-Development/tree/lab2) | [Hướng dẫn Lab02](https://github.com/FIT-DNU/Open-Source-Software-Development/blob/lab2/HUONG_DAN.md) |
-| Lab03 | Danh sách sự kiện, tìm kiếm và form | [lab3](https://github.com/FIT-DNU/Open-Source-Software-Development/tree/lab3) | [Hướng dẫn Lab03](https://github.com/FIT-DNU/Open-Source-Software-Development/blob/lab3/HUONG_DAN.md) |
-| Lab04 | Bản nháp bằng Session và Cookie | [lab4](https://github.com/FIT-DNU/Open-Source-Software-Development/tree/lab4) | [Hướng dẫn Lab04](https://github.com/FIT-DNU/Open-Source-Software-Development/blob/lab4/HUONG_DAN.md) |
-| Lab05 | Lưu, truy vấn và thống kê với PostgreSQL | [lab5](https://github.com/FIT-DNU/Open-Source-Software-Development/tree/lab5) | [Hướng dẫn Lab05](https://github.com/FIT-DNU/Open-Source-Software-Development/blob/lab5/HUONG_DAN.md) |
-
-### Chuẩn bị môi trường
-
-Trên Windows, mở **Ubuntu/WSL** để chạy các lệnh Bash bên dưới. Cần PHP **từ 8.1 trở lên** và Git:
+## Chuẩn bị trên Ubuntu/WSL
 
 ```bash
 sudo apt update
@@ -47,66 +13,25 @@ php -v
 git --version
 ```
 
-Lab01–04 không cần PostgreSQL, Composer hoặc framework. Lab05 cần chuẩn bị thêm PostgreSQL theo mục riêng bên dưới.
+PHP cần từ 8.1 trở lên. Các lệnh bên dưới chạy trong Ubuntu/WSL. Khi tải nhiều bài, trở về thư mục cha chứa các thư mục lab trước mỗi lệnh clone; không clone bài tiếp theo bên trong `Ma_nguon` của bài trước.
 
-### Clone và chạy từng bài
-
-Chạy mỗi nhóm lệnh từ thư mục bạn muốn lưu bài học. Nếu vừa chạy bài trước, dùng `cd ..` hai lần từ `labN/Ma_nguon` để trở về thư mục chứa các bài rồi mới clone bài tiếp theo. Mỗi lệnh clone tạo một thư mục riêng; nếu đã tải bài, chỉ cần vào thư mục `Ma_nguon` của bài đó để chạy lại.
-
-#### Lab01 — Linux và shell script
-
-```bash
-git clone --single-branch --branch lab1 https://github.com/FIT-DNU/Open-Source-Software-Development.git lab1
-cd lab1/Ma_nguon
-bash lab.sh check
-bash lab.sh run
-```
-
-Mở [http://127.0.0.1:8101](http://127.0.0.1:8101). Bài thực hành gồm script kiểm tra môi trường và quét cú pháp PHP.
-
-#### Lab02 — Module PHP
-
-```bash
-git clone --single-branch --branch lab2 https://github.com/FIT-DNU/Open-Source-Software-Development.git lab2
-cd lab2/Ma_nguon
-bash lab.sh check
-bash lab.sh run
-```
-
-Kết quả in ngay trong terminal, không cần trình duyệt. Ví dụ mẫu còn chỗ trả `AVAILABLE`.
-
-#### Lab03 — Tìm kiếm và form
-
-```bash
-git clone --single-branch --branch lab3 https://github.com/FIT-DNU/Open-Source-Software-Development.git lab3
-cd lab3/Ma_nguon
-bash lab.sh check
-bash lab.sh run
-```
-
-Mở [danh sách sự kiện](http://127.0.0.1:8103) hoặc [form đăng ký](http://127.0.0.1:8103/register.php). Form hợp lệ hiển thị `PREVIEW_OK`; chưa lưu Session hoặc CSDL.
-
-#### Lab04 — Session và Cookie
-
-```bash
-git clone --single-branch --branch lab4 https://github.com/FIT-DNU/Open-Source-Software-Development.git lab4
-cd lab4/Ma_nguon
-bash lab.sh check
-bash lab.sh run
-```
-
-Mở [http://127.0.0.1:8104/register.php](http://127.0.0.1:8104/register.php). Thử nhập, xem lại, sửa, hủy và hoàn tất bản nháp. Hoàn tất hiển thị `SIMULATED_OK`; chưa ghi CSDL.
-
-#### Lab05 — PostgreSQL
+## Tải bài
 
 ```bash
 git clone --single-branch --branch lab5 https://github.com/FIT-DNU/Open-Source-Software-Development.git lab5
 cd lab5/Ma_nguon
+```
+
+## Cấu hình PostgreSQL trước lần chạy đầu
+
+Tại `lab5/Ma_nguon`, cài và khởi động PostgreSQL:
+
+```bash
 sudo apt install postgresql postgresql-client php-pgsql
 sudo service postgresql start
 ```
 
-**Trước khi chạy ứng dụng**, làm mục [Chuẩn bị riêng cho Lab 05](https://github.com/FIT-DNU/Open-Source-Software-Development/blob/lab5/HUONG_DAN.md): tạo tài khoản và CSDL lab riêng hoặc dùng thông tin giảng viên cấp. Sau đó, tại `lab5/Ma_nguon`:
+Làm mục **Chuẩn bị riêng cho Lab 05** trong [HUONG_DAN.md](HUONG_DAN.md) để tạo tài khoản và CSDL lab riêng, hoặc dùng thông tin giảng viên cấp. Không xóa CSDL đã tồn tại. Sau đó:
 
 ```bash
 bash lab.sh db-config
@@ -114,7 +39,7 @@ bash lab.sh check
 bash lab.sh sql
 ```
 
-Nhập thông tin kết nối theo lời nhắc của `db-config`. Khi lệnh `sql` mở cửa sổ PostgreSQL, tạo bảng và kiểm tra dữ liệu mẫu:
+Nhập thông tin kết nối theo lời nhắc. Trong cửa sổ PostgreSQL vừa mở:
 
 ```sql
 \i database/schema.sql
@@ -122,74 +47,73 @@ SELECT id, title FROM events ORDER BY id;
 \q
 ```
 
-Cần thấy 3 sự kiện mẫu. Trở về Bash và chạy:
+Cần có 3 sự kiện mẫu. Trở về Bash rồi làm mục Chạy bài bên dưới. Nếu khởi động lại WSL và PostgreSQL chưa chạy, dùng `sudo service postgresql start`.
+
+## Chạy bài
 
 ```bash
+bash lab.sh check
 bash lab.sh run
 ```
 
-Mở [http://127.0.0.1:8105/register.php](http://127.0.0.1:8105/register.php). Đăng ký lần đầu trả `CREATED`; cùng email và sự kiện trả `DUPLICATE`. Không đưa thư mục `.local` chứa cấu hình mật khẩu vào Git hoặc bài nộp.
+Mở [danh sách sự kiện](http://127.0.0.1:8105/) hoặc [form đăng ký](http://127.0.0.1:8105/register.php). Giữ terminal mở; Ctrl+C để dừng.
 
-### Kiểm thử và dừng ứng dụng
+## Kiểm tra
 
-Với các bài Web, giữ terminal máy chủ mở; nhấn **Ctrl+C** để dừng. Để chạy kiểm thử trong lúc Web hoạt động, mở terminal Ubuntu/WSL thứ hai và vào đúng thư mục `Ma_nguon` của bài:
+Mở terminal thứ hai tại Ma_nguon, hoặc dừng máy chủ trước:
 
 ```bash
 bash lab.sh test
 bash lab.sh extend
 ```
 
-- `check`: chỉ kiểm tra môi trường, không xác nhận bài tập hoàn thành.
-- `test`: kiểm tra phần mẫu; Lab05 có kiểm thử tích hợp PostgreSQL.
-- `extend`: kiểm tra phần tự làm; có thể chưa đạt khi sinh viên chưa hoàn thiện TODO. Không sửa test để bỏ qua lỗi.
+test kiểm tra phần mẫu; extend kiểm tra phần tự làm. Sinh viên cần hoàn thiện TODO; extend có thể chưa đạt ở bản khởi đầu.
 
-Nếu báo `No such file or directory`, kiểm tra `pwd` và `ls`: thư mục hiện tại cần chứa `lab.sh`. Nếu báo `Address already in use`, dừng máy chủ cũ bằng Ctrl+C trước khi chạy lại.
+[Hướng dẫn đầy đủ](HUONG_DAN.md) · [Hướng dẫn mã nguồn](Ma_nguon/README.md)
 
-### Kết quả kiểm thử phần mẫu
+Không đưa .local, mật khẩu hoặc dữ liệu cá nhân thật vào bài nộp.
 
-| Bài | Kết quả yêu cầu của `bash lab.sh test` |
-| --- | --- |
-| Lab01 | `CHECK_ENV=PASS` |
-| Lab02 | `TESTS=5 FAILED=0` |
-| Lab03 | `TESTS=7 FAILED=0` |
-| Lab04 | `TESTS=6 FAILED=0` |
-| Lab05 | `TESTS=6 FAILED=0` và `TESTS=7 FAILED=0` |
+## Các bài khác
 
-Các TODO được giữ nguyên cho sinh viên. Bộ `extend` ở bản khởi đầu còn ca chưa đạt; đây là phần cần tự làm, không phải lỗi clone hoặc cài môi trường.
+[Lab01](https://github.com/FIT-DNU/Open-Source-Software-Development/tree/lab1) · [Lab02](https://github.com/FIT-DNU/Open-Source-Software-Development/tree/lab2) · [Lab03](https://github.com/FIT-DNU/Open-Source-Software-Development/tree/lab3) · [Lab04](https://github.com/FIT-DNU/Open-Source-Software-Development/tree/lab4) · [Lab05](https://github.com/FIT-DNU/Open-Source-Software-Development/tree/lab5)
 
-### Nhập mật khẩu và thử luồng Web
+Kết quả yêu cầu của phần mẫu: `TESTS=6 FAILED=0 và TESTS=7 FAILED=0`. `check` chỉ kiểm tra môi trường. `extend` ở bản khởi đầu còn ca chưa đạt vì TODO; không sửa test để bỏ qua lỗi.
 
-Lab05: chạy `bash lab.sh db-config` trực tiếp trong terminal Ubuntu/WSL tương tác, tại `lab5/Ma_nguon`; không pipe đầu vào. Khi nhập mật khẩu, không có ký tự hoặc dấu sao hiện lên: gõ rồi nhấn Enter. Chỉ kết nối thành công mới có `CAU_HINH=DA_LUU`. Sai mật khẩu không ghi đè cấu hình đã lưu; chạy lại để nhập đúng. Sau đó chạy `check` và tạo schema như hướng dẫn ở trên.
+## Nhập mật khẩu trong db-config
 
-| Bài | Luồng mẫu để tự kiểm tra |
-| --- | --- |
-| Lab01 | Mở trang mẫu ở cổng 8101; bài shell thực hiện trong terminal. |
-| Lab02 | Chạy trong terminal, kết quả mẫu là `AVAILABLE`; không có Web. |
-| Lab03 | Tìm `php`/`xyz`, mở form, thử dữ liệu sai rồi đúng; đúng trả `PREVIEW_OK`, chưa lưu dữ liệu. |
-| Lab04 | Nhập → xem lại → sửa/hủy → nhập lại và xác nhận; kết quả `SIMULATED_OK`. Thử lưu tùy chọn Cookie. |
-| Lab05 | Nhập và xác nhận: `CREATED`; lặp cùng sự kiện–email: `DUPLICATE`. Khởi động lại PHP không mất dữ liệu. |
+Chạy `bash lab.sh db-config` trực tiếp trong terminal Ubuntu/WSL tương tác, tại `Ma_nguon`. Không dùng pipe hoặc chuyển hướng đầu vào cho lệnh này.
 
-Dùng dữ liệu thử nghiệm, không dùng thông tin cá nhân thật. Mở phiên trình duyệt riêng để kiểm tra cách ly Session. Cookie tùy chọn `view` của Lab04/05 dùng chung theo host, không tách theo cổng; dùng hai phiên riêng nếu so sánh đồng thời hai lab.
+- Nhấn Enter để dùng máy chủ `127.0.0.1` và cổng `5432`, hoặc nhập giá trị được cấp.
+- Tên CSDL và tài khoản phải khớp tài khoản đã tạo; mặc định là `communitypass_lab_v5`.
+- Khi nhập mật khẩu, terminal **không hiện ký tự hoặc dấu sao**. Gõ mật khẩu rồi nhấn Enter; đây là hành vi bình thường.
+- Kết nối thành công mới có `CAU_HINH=DA_LUU`. Sau đó chạy `bash lab.sh check`, tạo schema theo hướng dẫn rồi chạy Web.
+- Sai mật khẩu: công cụ báo kết nối thất bại và không lưu cấu hình mới. Cấu hình đã lưu từ trước được giữ nguyên; chạy lại `db-config` để sửa thông tin.
+- Nếu báo `Mo terminal tuong tac de nhap mat khau`, mở terminal tương tác thực sự rồi chạy lại. Không đưa mật khẩu vào câu lệnh, ảnh chụp, Git hoặc bài nộp.
 
-Nếu Lab05 mất kết nối lúc lưu, ứng dụng giữ bản nháp và báo lỗi 503. Sau khi khôi phục kết nối, quay lại xác nhận để thử lại. Danh sách sự kiện hiển thị số chỗ mẫu, không phản ánh số đăng ký thực trong CSDL. Bộ lọc nâng cao, kiểm tra bản nháp mở rộng và thống kê vẫn là TODO dành cho sinh viên.
+Chỉ cần cấu hình lại khi thông tin kết nối thay đổi. Mỗi lần chạy `check` đạt không thay thế bước tạo schema ban đầu.
+## Tự kiểm tra luồng trên trình duyệt
+
+1. Mở `/register.php`, gửi form trống: thấy lỗi họ tên/email.
+2. Chọn sự kiện, nhập tên và email thử nghiệm, nhấn **Tiếp tục**: chuyển sang trang xác nhận.
+3. Chọn **Sửa lại**: sự kiện, tên và email của bản nháp vẫn còn. Thử sửa rồi tiếp tục.
+4. Chọn **Hủy bản nháp**: quay về form trống. Nhập lại thông tin và xác nhận để kiểm tra luồng hoàn tất.
+5. Tại form đăng ký, chọn **Đầy đủ**, nhấn **Lưu tùy chọn**: dòng `Tùy chọn Cookie` hiển thị `full`.
+6. Dùng một phiên trình duyệt riêng để mở `/confirm.php`: phiên mới chưa có bản nháp nên được chuyển về form nhập. Không dùng hai tab cùng phiên để kiểm tra cách ly Session.
+
+Khi so sánh Lab04 và Lab05 trên `127.0.0.1`, dùng hai phiên trình duyệt riêng: Cookie tùy chọn `view` dùng chung theo host, không tách theo cổng. Dữ liệu Session của từng lab dùng tên và thư mục riêng do `lab.sh` thiết lập.
+Hoàn tất lần đầu cần thấy `CREATED`. Nhập lại cùng sự kiện và email (kể cả đổi chữ hoa/thường): cần thấy `DUPLICATE`. Đổi sang một sự kiện khác là một đăng ký khác.
+
+Đóng máy chủ bằng Ctrl+C rồi chạy lại `bash lab.sh run`: dữ liệu trong CSDL vẫn còn. Thử cùng cặp sự kiện–email vẫn trả `DUPLICATE`.
+
+Nếu mất kết nối khi xác nhận, ứng dụng trả lỗi 503 và thông báo giữ bản nháp. Khôi phục kết nối, chọn **Quay lại xác nhận** rồi thử lại; không coi lỗi kết nối là `DUPLICATE`. Danh sách sự kiện vẫn hiển thị số chỗ mẫu; không dùng số đó để kết luận số đăng ký thực trong CSDL. Thống kê mở rộng vẫn là TODO.
 
 
-### Bản giao diện Material 3
+## Giao diện Material 3 và khu thử riêng
 
-Các nhánh [lab1](https://github.com/FIT-DNU/Open-Source-Software-Development/tree/lab1), [lab3](https://github.com/FIT-DNU/Open-Source-Software-Development/tree/lab3), [lab4](https://github.com/FIT-DNU/Open-Source-Software-Development/tree/lab4), [lab5](https://github.com/FIT-DNU/Open-Source-Software-Development/tree/lab5) đã bổ sung giao diện, ảnh minh họa cục bộ và tài liệu tương ứng. [lab2](https://github.com/FIT-DNU/Open-Source-Software-Development/tree/lab2) tiếp tục chạy trong terminal. Giữ nguyên các lệnh clone/chạy phía trên; không cần Node, Composer hay bước build.
+Sau `bash lab.sh run`, mở [sự kiện mẫu](http://127.0.0.1:8105/ui-demo.php) hoặc [thử vé/ghế](http://127.0.0.1:8105/ticket-preview.php?id=demo-open-source). Sáu sự kiện hư cấu và ảnh SVG cục bộ có giấy phép CC0. Không cần cài thêm thư viện hoặc build.
 
-Với Lab03–05, sau khi chạy máy chủ, mở khu thử riêng:
+Chi tiết sự kiện lab tại `/event.php?id=1` chỉ đọc; nút mở biểu mẫu vẫn dùng chức năng gốc. Lựa chọn demo chỉ ở bộ nhớ trang, tải lại sẽ xóa; chưa giữ ghế, tạo vé hoặc thanh toán. ID demo không đi vào Form/CSDL. TODO và các ca `extend` sinh viên vẫn giữ nguyên.
 
-| Bài | Sáu sự kiện hư cấu | Thử vé và ghế |
-| --- | --- | --- |
-| Lab03 | [Sự kiện mẫu](http://127.0.0.1:8103/ui-demo.php) | [Chọn thử](http://127.0.0.1:8103/ticket-preview.php?id=demo-open-source) |
-| Lab04 | [Sự kiện mẫu](http://127.0.0.1:8104/ui-demo.php) | [Chọn thử](http://127.0.0.1:8104/ticket-preview.php?id=demo-open-source) |
-| Lab05 | [Sự kiện mẫu](http://127.0.0.1:8105/ui-demo.php) | [Chọn thử](http://127.0.0.1:8105/ticket-preview.php?id=demo-open-source) |
+Xem [hướng dẫn phần trình bày](Ma_nguon/README.md#giao-diện-material-3).
 
-Lab05 vẫn cần cấu hình PostgreSQL cho các trang nghiệp vụ. Danh sách, biểu mẫu và mã kết quả `PREVIEW_OK`, `SIMULATED_OK`, `CREATED`, `DUPLICATE` giữ nguyên ý nghĩa. Metadata hư cấu ở trang chi tiết chỉ phục vụ trình bày; ID demo không đi vào đăng ký thật.
-
-Khu thử vé/ghế chỉ giữ lựa chọn trong bộ nhớ trang, tải lại sẽ xóa; chưa giữ ghế, tạo vé hay thanh toán. Có 96 ghế mẫu, 68 khả dụng; hai VIP giá mẫu 350.000 đồng có tổng 700.000 đồng. Bản sinh viên vẫn giữ TODO và các ca `extend` chưa đạt cho sinh viên tự làm. Có thể kiểm tra dữ liệu UI riêng bằng `php tests/ui-demo.php` tại `Ma_nguon` Lab03–05.
-
-Ảnh SVG tự tạo có giấy phép CC0 trong `Ma_nguon/public/assets/images/LICENSE.txt` của từng lab Web. README, HUONG_DAN.md, ảnh hướng dẫn và Word của các bài bị ảnh hưởng đã cập nhật; mục tiêu và rubric giữ nguyên.
-
-[Ranh giới sản phẩm](docs/communitypass/PRODUCT.md) · [Hệ thống trình bày](docs/communitypass/DESIGN.md)
+Kiểm tra dữ liệu UI riêng (không thay test gốc, không cần CSDL): tại `Ma_nguon`, chạy `php tests/ui-demo.php`.
