@@ -45,11 +45,11 @@ $isPending  = ($voucher['status'] ?? '') === 'PENDING';
 $decreases  = in_array($type, ['EXPORT', 'TRANSFER'], true);   // phiếu làm giảm tồn kho chính
 $canDecide  = $voucher !== null && $isPending && isManager($user)
               && !array_filter($warehouseIds, fn ($id) => !canAccessWarehouse($user, $id));
-$listUrl    = in_array($type, ['IMPORT', 'EXPORT'], true) ? 'voucher_list.php?type=' . $type : '../index.php';
+$listUrl    = 'voucher_list.php?type=' . $type;
 
 $pageTitle  = $voucher ? voucherTypeLabel($type) . ' ' . $voucher['code'] : 'Chi tiết chứng từ';
 $basePath   = '../';
-$activeMenu = ['IMPORT' => 'imports', 'EXPORT' => 'exports', 'TRANSFER' => 'transfers', 'ADJUSTMENT' => 'adjustments'][$type];
+$activeMenu = voucherPageInfo($type)['menu'];
 require __DIR__ . '/layout/header.php';
 ?>
 

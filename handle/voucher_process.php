@@ -14,7 +14,7 @@ verifyCsrf();
 
 $action    = (string) ($_POST['action'] ?? '');
 $voucherId = (int) ($_POST['id'] ?? 0);
-$type      = ($_POST['type'] ?? '') === 'EXPORT' ? 'EXPORT' : 'IMPORT';
+$type      = requestedVoucherType($_POST['type'] ?? '', ['IMPORT', 'EXPORT', 'TRANSFER']);
 
 try {
     $pdo = getDbConnection();

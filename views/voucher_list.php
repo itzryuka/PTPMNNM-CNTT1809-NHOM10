@@ -7,7 +7,8 @@ require_once __DIR__ . '/../functions/voucher_functions.php';
 
 $user = requireLogin('../');
 
-$type = ($_GET['type'] ?? '') === 'EXPORT' ? 'EXPORT' : 'IMPORT';
+$type     = requestedVoucherType($_GET['type'] ?? '');
+$typeInfo = voucherPageInfo($type);
 [$keyword, $pageSize, $page] = readListParams();
 $filters = [
     'keyword'      => $keyword,
@@ -31,16 +32,20 @@ try {
     $dbError    = 'Không thể tải dữ liệu: ' . $e->getMessage();
 }
 
-$pageTitle  = $type === 'IMPORT' ? 'Phiếu Nhập Kho' : 'Phiếu Xuất Kho';
+$pageTitle  = $typeInfo['title'];
 $basePath   = '../';
-$activeMenu = $type === 'IMPORT' ? 'imports' : 'exports';
+$activeMenu = $typeInfo['menu'];
 require __DIR__ . '/layout/header.php';
 ?>
 
             <!-- TOOLBAR -->
             <div class="toolbar">
                 <div class="toolbar-top">
-                    <a class="btn btn-primary" href="voucher_form.php?type=<?= $type ?>"><i class="fas fa-plus"></i> Lập phiếu <?= $type === 'IMPORT' ? 'nhập' : 'xuất' ?></a>
+                    <?php if ($typeInfo['create']): ?>
+                        <a class="btn btn-primary" href="voucher_form.php?type=<?= $type ?>"><i class="fas fa-plus"></i> <?= e($typeInfo['create']) ?></a>
+                    <?php else: ?>
+                        <span class="muted"><i class="fas fa-info-circle"></i> Phiếu điều chỉnh được sinh tự động khi duyệt đợt kiểm kê.</span>
+                    <?php endif; ?>
                 </div>
 
                 <div class="toolbar-bottom">
@@ -77,7 +82,7 @@ require __DIR__ . '/layout/header.php';
                         <tr>
                             <th>Mã Phiếu</th>
                             <th>Ngày Lập</th>
-                            <th>Kho</th>
+                            <th><?= $type === 'TRANSFER' ? 'Kho Đi → Kho Đến' : 'Kho' ?></th>
                             <th>Lý Do / Ghi Chú</th>
                             <th class="text-right">Số Dòng</th>
                             <th class="text-right">Tổng SL</th>
@@ -94,7 +99,12 @@ require __DIR__ . '/layout/header.php';
                             <tr>
                                 <td><a class="link-strong" href="voucher_detail.php?id=<?= (int) $voucher['id'] ?>"><?= e($voucher['code']) ?></a></td>
                                 <td><?= formatDate($voucher['voucher_date']) ?></td>
-                                <td><?= e($voucher['warehouse_name']) ?></td>
+                                <td>
+                                    <?= e($voucher['warehouse_name']) ?>
+                                    <?php if ($voucher['to_warehouse_name'] !== null): ?>
+                                        <i class="fas fa-arrow-right muted"></i> <?= e($voucher['to_warehouse_name']) ?>
+                                    <?php endif; ?>
+                                </td>
                                 <td class="wrap"><?= $voucher['reason'] !== null ? e($voucher['reason']) : '<span class="muted">—</span>' ?></td>
                                 <td class="text-right"><?= (int) $voucher['line_count'] ?></td>
                                 <td class="text-right"><?= formatQty($voucher['total_qty']) ?></td>
