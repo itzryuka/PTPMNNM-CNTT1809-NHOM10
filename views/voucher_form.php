@@ -6,7 +6,8 @@ require_once __DIR__ . '/../functions/auth.php';
 require_once __DIR__ . '/../functions/voucher_functions.php';
 
 $user = requireLogin('../');
-$type = ($_GET['type'] ?? '') === 'EXPORT' ? 'EXPORT' : 'IMPORT';
+$type     = requestedVoucherType($_GET['type'] ?? '', ['IMPORT', 'EXPORT', 'TRANSFER']);
+$typeInfo = voucherPageInfo($type);
 
 // Dữ liệu đã nhập khi lưu lỗi lần trước (handle/voucher_process.php gửi lại)
 $old = $_SESSION['voucher_form_old'] ?? null;
@@ -17,29 +18,39 @@ if (!is_array($old) || ($old['type'] ?? '') !== $type) {
 // Mã chống gửi trùng: giữ nguyên khi form bị trả lại vì lỗi (phiếu chưa được tạo)
 $clientToken = preg_match('/^[0-9a-f]{32}$/', $old['client_token'] ?? '') ? $old['client_token'] : bin2hex(random_bytes(16));
 
-$warehouses = [];
-$formData   = [];
-$dbError    = '';
+$warehouses     = [];
+$toWarehouses   = [];
+$formData       = [];
+$dbError        = '';
 try {
     $pdo        = getDbConnection();
     $warehouses = getWarehouseOptions($pdo, $user['warehouses']);
+    // Kho đến của phiếu điều chuyển: mọi kho đang hoạt động (người lập chỉ cần quyền ở kho đi)
+    $toWarehouses = $type === 'TRANSFER' ? getWarehouseOptions($pdo, null) : [];
     $formData   = [
         'type'     => $type,
         'today'    => date('Y-m-d'),
         'items'    => getItemOptions($pdo),
         'batches'  => $type === 'IMPORT' ? getBatchOptions($pdo) : [],
-        'stock'    => $type === 'EXPORT' ? getStockOptions($pdo, $user['warehouses']) : [],
+        'stock'    => $type !== 'IMPORT' ? getStockOptions($pdo, $user['warehouses']) : [],
         'oldLines' => array_values(is_array($old['lines'] ?? null) ? $old['lines'] : []),
     ];
 } catch (PDOException $e) {
     $dbError = 'Không thể tải dữ liệu: ' . $e->getMessage();
 }
 
-$selectedWarehouse = (int) ($old['warehouse_id'] ?? ($warehouses[0]['id'] ?? 0));
+$selectedWarehouse   = (int) ($old['warehouse_id'] ?? ($warehouses[0]['id'] ?? 0));
+$selectedToWarehouse = (int) ($old['to_warehouse_id'] ?? 0);
 $isImport     = $type === 'IMPORT';
-$pageTitle    = $isImport ? 'Lập Phiếu Nhập Kho' : 'Lập Phiếu Xuất Kho';
+$fromLabel    = ['IMPORT' => 'Kho nhập', 'EXPORT' => 'Kho xuất', 'TRANSFER' => 'Kho đi'][$type];
+$reasonLabel  = [
+    'IMPORT'   => ['Nhà cung cấp / người giao hàng / ghi chú', 'Vd: Nhập hàng từ NCC Vinamilk, người giao: Anh Tuấn'],
+    'EXPORT'   => ['Lý do xuất / người nhận hàng', 'Vd: Xuất bán cho Siêu thị Hòa Bình'],
+    'TRANSFER' => ['Lý do điều chuyển / người vận chuyển', 'Vd: Bổ sung hàng cho Kho HCM, xe 51C-123.45'],
+][$type];
+$pageTitle    = 'Lập ' . $typeInfo['title'];
 $basePath     = '../';
-$activeMenu   = $isImport ? 'imports' : 'exports';
+$activeMenu   = $typeInfo['menu'];
 $extraScripts = ['js/voucher_form.js'];
 require __DIR__ . '/layout/header.php';
 ?>
@@ -58,7 +69,7 @@ require __DIR__ . '/layout/header.php';
                     <h3><i class="fas fa-file-alt"></i> Thông tin phiếu</h3>
                     <div class="form-grid">
                         <div class="form-group">
-                            <label for="warehouseId">Kho <?= $isImport ? 'nhập' : 'xuất' ?> *</label>
+                            <label for="warehouseId"><?= $fromLabel ?> *</label>
                             <!-- Chỉ liệt kê kho được phân quyền; server vẫn kiểm tra lại khi lưu -->
                             <select class="form-control" id="warehouseId" name="warehouse_id" required>
                                 <?php foreach ($warehouses as $warehouse): ?>
@@ -68,6 +79,19 @@ require __DIR__ . '/layout/header.php';
                                 <?php endforeach; ?>
                             </select>
                         </div>
+                        <?php if ($type === 'TRANSFER'): ?>
+                            <div class="form-group">
+                                <label for="toWarehouseId">Kho đến *</label>
+                                <select class="form-control" id="toWarehouseId" name="to_warehouse_id" required>
+                                    <option value="">-- Chọn kho đến --</option>
+                                    <?php foreach ($toWarehouses as $warehouse): ?>
+                                        <option value="<?= (int) $warehouse['id'] ?>" <?= (int) $warehouse['id'] === $selectedToWarehouse ? 'selected' : '' ?>>
+                                            <?= e($warehouse['code'] . ' - ' . $warehouse['name']) ?>
+                                        </option>
+                                    <?php endforeach; ?>
+                                </select>
+                            </div>
+                        <?php endif; ?>
                         <div class="form-group">
                             <label for="voucherDate">Ngày lập *</label>
                             <input class="form-control" type="date" id="voucherDate" name="voucher_date" required
@@ -78,10 +102,10 @@ require __DIR__ . '/layout/header.php';
                             <input class="form-control" value="<?= e($user['full_name']) ?>" disabled>
                         </div>
                         <div class="form-group span-all">
-                            <label for="reason"><?= $isImport ? 'Nhà cung cấp / người giao hàng / ghi chú' : 'Lý do xuất / người nhận hàng' ?></label>
+                            <label for="reason"><?= $reasonLabel[0] ?></label>
                             <input class="form-control" id="reason" name="reason" maxlength="255"
                                    value="<?= e($old['reason'] ?? '') ?>"
-                                   placeholder="<?= $isImport ? 'Vd: Nhập hàng từ NCC Vinamilk, người giao: Anh Tuấn' : 'Vd: Xuất bán cho Siêu thị Hòa Bình' ?>">
+                                   placeholder="<?= $reasonLabel[1] ?>">
                         </div>
                     </div>
                 </div>
@@ -93,7 +117,7 @@ require __DIR__ . '/layout/header.php';
                         <button type="button" class="btn btn-export btn-sm" id="addLine"><i class="fas fa-plus"></i> Thêm dòng</button>
                     </div>
                     <?php if (!$isImport): ?>
-                        <p class="form-hint">Chỉ hiện các lô còn tồn tại kho đã chọn, lô hết hạn sớm xếp trước. Số tồn được kiểm tra lại khi duyệt phiếu.</p>
+                        <p class="form-hint">Chỉ hiện các lô còn tồn tại <?= $type === 'TRANSFER' ? 'kho đi' : 'kho đã chọn' ?>, lô hết hạn sớm xếp trước. Số tồn được kiểm tra lại khi duyệt phiếu.</p>
                     <?php else: ?>
                         <p class="form-hint">Chọn lô có sẵn hoặc chọn "+ Tạo lô mới" để khai báo số lô và hạn sử dụng.</p>
                     <?php endif; ?>

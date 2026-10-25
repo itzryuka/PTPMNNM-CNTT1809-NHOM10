@@ -136,11 +136,23 @@
         renumber();
     }
 
-    // Đổi kho xuất -> nạp lại danh sách lô còn tồn của kho mới
+    // Điều chuyển: kho đến không được trùng kho đi
+    const toWarehouseSelect = document.getElementById('toWarehouseId');
+    function syncDestination() {
+        if (!toWarehouseSelect) return;
+        [...toWarehouseSelect.options].forEach(o => { o.disabled = o.value !== '' && o.value === warehouseSelect.value; });
+        if (toWarehouseSelect.selectedOptions[0] && toWarehouseSelect.selectedOptions[0].disabled) {
+            toWarehouseSelect.value = '';
+        }
+    }
+
+    // Đổi kho xuất / kho đi -> nạp lại danh sách lô còn tồn của kho mới
     if (!isImport) {
         warehouseSelect.addEventListener('change', () => {
             tbody.querySelectorAll('tr').forEach(tr => fillBatches(tr, tr.querySelector('.js-batch').value));
+            syncDestination();
         });
+        syncDestination();
     }
 
     document.getElementById('addLine').addEventListener('click', () => addRow());

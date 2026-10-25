@@ -14,20 +14,23 @@ const VOUCHER_PREFIX = ['IMPORT' => 'PN', 'EXPORT' => 'PX', 'TRANSFER' => 'PC', 
 
 /**
  * Điều kiện lọc danh sách phiếu. $filters = [keyword, status, warehouse_id]
- * Chỉ hiện phiếu thuộc kho user được phân quyền (lọc ở server).
+ * Chỉ hiện phiếu liên quan tới kho user được phân quyền (lọc ở server):
+ * kho chính, hoặc kho đến với phiếu điều chuyển (kho nhận cũng thấy hàng chuyển tới).
  */
 function buildVoucherCondition(string $type, array $filters, array $allowedWarehouses): array
 {
-    [$whFilter, $whParams] = warehouseFilter('v.warehouse_id', $allowedWarehouses);
-    $sql    = "v.type = ? AND $whFilter";
-    $params = array_merge([$type], $whParams);
+    [$fromFilter, $fromParams] = warehouseFilter('v.warehouse_id', $allowedWarehouses);
+    [$toFilter, $toParams]     = warehouseFilter('v.to_warehouse_id', $allowedWarehouses);
+    $sql    = "v.type = ? AND ($fromFilter OR $toFilter)";
+    $params = array_merge([$type], $fromParams, $toParams);
 
     if ($filters['status'] !== '') {
         $sql     .= ' AND v.status = ?';
         $params[] = $filters['status'];
     }
     if ($filters['warehouse_id'] > 0) {
-        $sql     .= ' AND v.warehouse_id = ?';
+        $sql     .= ' AND (v.warehouse_id = ? OR v.to_warehouse_id = ?)';
+        $params[] = $filters['warehouse_id'];
         $params[] = $filters['warehouse_id'];
     }
     if ($filters['keyword'] !== '') {
@@ -54,15 +57,16 @@ function getVouchers(PDO $pdo, string $type, array $filters, array $allowedWareh
 
     $stmt = $pdo->prepare("
         SELECT v.id, v.code, v.status, v.voucher_date, v.reason,
-               w.code AS warehouse_code, w.name AS warehouse_name,
+               w.code AS warehouse_code, w.name AS warehouse_name, tw.name AS to_warehouse_name,
                u.full_name AS creator_name,
                COUNT(vl.id) AS line_count, COALESCE(SUM(vl.quantity), 0) AS total_qty
         FROM vouchers v
-        JOIN warehouses w ON w.id = v.warehouse_id
-        JOIN users u      ON u.id = v.created_by
+        JOIN warehouses w       ON w.id = v.warehouse_id
+        LEFT JOIN warehouses tw ON tw.id = v.to_warehouse_id
+        JOIN users u            ON u.id = v.created_by
         LEFT JOIN voucher_lines vl ON vl.voucher_id = v.id
         WHERE $where
-        GROUP BY v.id, v.code, v.status, v.voucher_date, v.reason, w.code, w.name, u.full_name
+        GROUP BY v.id, v.code, v.status, v.voucher_date, v.reason, w.code, w.name, tw.name, u.full_name
         ORDER BY v.voucher_date DESC, v.id DESC
         LIMIT $limit OFFSET $offset
     ");
@@ -147,7 +151,8 @@ function getOpenStockCounts(PDO $pdo, array $warehouseIds, bool $lock = false): 
 
 // ----- Dữ liệu cho form lập phiếu -----
 
-function getWarehouseOptions(PDO $pdo, array $allowedWarehouses): array
+/** $allowedWarehouses = null -> mọi kho đang hoạt động (vd chọn kho đến khi điều chuyển) */
+function getWarehouseOptions(PDO $pdo, ?array $allowedWarehouses): array
 {
     [$whFilter, $whParams] = warehouseFilter('w.id', $allowedWarehouses);
     $stmt = $pdo->prepare("SELECT w.id, w.code, w.name FROM warehouses w WHERE w.is_active = 1 AND $whFilter ORDER BY w.code");
@@ -185,25 +190,29 @@ function getStockOptions(PDO $pdo, array $allowedWarehouses): array
 // =====================================================================
 
 /**
- * Lập phiếu nhập / xuất ở trạng thái PENDING. Trả về id phiếu.
- * $input: type, warehouse_id, voucher_date, reason, client_token, lines[]
- *   mỗi dòng: item_id, batch_id (id lô | 'new'), new_batch_no, new_mfg, new_expiry, quantity
+ * Lập phiếu nhập / xuất / điều chuyển ở trạng thái PENDING. Trả về id phiếu.
+ * $input: type, warehouse_id, to_warehouse_id (chỉ TRANSFER), voucher_date, reason, client_token, lines[]
+ *   mỗi dòng: item_id, batch_id (id lô | 'new' khi nhập), new_batch_no, new_mfg, new_expiry, quantity
  */
 function createVoucher(PDO $pdo, array $user, array $input): int
 {
-    $type        = (string) ($input['type'] ?? '');
-    $warehouseId = (int) ($input['warehouse_id'] ?? 0);
-    $voucherDate = (string) ($input['voucher_date'] ?? '');
-    $reason      = trim((string) ($input['reason'] ?? ''));
-    $token       = (string) ($input['client_token'] ?? '');
+    $type          = (string) ($input['type'] ?? '');
+    $warehouseId   = (int) ($input['warehouse_id'] ?? 0);
+    $toWarehouseId = $type === 'TRANSFER' ? (int) ($input['to_warehouse_id'] ?? 0) : null;
+    $voucherDate   = (string) ($input['voucher_date'] ?? '');
+    $reason        = trim((string) ($input['reason'] ?? ''));
+    $token         = (string) ($input['client_token'] ?? '');
 
-    if (!in_array($type, ['IMPORT', 'EXPORT'], true)) {
+    if (!in_array($type, ['IMPORT', 'EXPORT', 'TRANSFER'], true)) {
         throw new VoucherException('Loại phiếu không hợp lệ.');
     }
-    // PHÂN QUYỀN PHÍA SERVER: kho gửi lên phải thuộc danh sách kho user phụ trách.
+    // PHÂN QUYỀN PHÍA SERVER: kho gửi lên (kho đi nếu điều chuyển) phải thuộc danh sách kho user phụ trách.
     // Sửa HTML / gửi request trực tiếp (Postman) với kho khác đều bị chặn tại đây.
     if (!canAccessWarehouse($user, $warehouseId)) {
         throw new VoucherException('Lỗi bảo mật: bạn không có quyền lập phiếu cho kho này.');
+    }
+    if ($type === 'TRANSFER' && ($toWarehouseId <= 0 || $toWarehouseId === $warehouseId)) {
+        throw new VoucherException('Kho đến phải khác kho đi.');
     }
     if (!preg_match('/^[0-9a-f]{32}$/', $token)) {
         throw new VoucherException('Biểu mẫu không hợp lệ, vui lòng tải lại trang.');
@@ -225,9 +234,11 @@ function createVoucher(PDO $pdo, array $user, array $input): int
     $pdo->beginTransaction();
     try {
         $stmt = $pdo->prepare('SELECT is_active FROM warehouses WHERE id = ?');
-        $stmt->execute([$warehouseId]);
-        if ((int) $stmt->fetchColumn() !== 1) {
-            throw new VoucherException('Kho đã ngừng hoạt động.');
+        foreach (array_filter([$warehouseId, $toWarehouseId]) as $id) {
+            $stmt->execute([$id]);
+            if ((int) $stmt->fetchColumn() !== 1) {
+                throw new VoucherException('Kho không tồn tại hoặc đã ngừng hoạt động.');
+            }
         }
 
         $seen = [];
@@ -249,9 +260,9 @@ function createVoucher(PDO $pdo, array $user, array $input): int
                 if ($expiry === false) {
                     throw new VoucherException($label . 'lô hàng không thuộc mặt hàng đã chọn.');
                 }
-                if ($type === 'EXPORT') {
+                if ($type !== 'IMPORT') {               // xuất / điều chuyển: lấy hàng khỏi kho chính
                     if ($expiry !== null && $expiry < date('Y-m-d')) {
-                        throw new VoucherException($label . 'lô đã hết hạn, không được xuất.');
+                        throw new VoucherException($label . 'lô đã hết hạn, không được xuất / điều chuyển.');
                     }
                     // Kiểm tra sớm cho người lập. Kiểm tra QUYẾT ĐỊNH vẫn nằm ở bước duyệt (có khóa).
                     $available = getStockQty($pdo, $warehouseId, $line['item_id'], $line['batch_id']);
@@ -271,10 +282,10 @@ function createVoucher(PDO $pdo, array $user, array $input): int
 
         $code = nextVoucherCode($pdo, $type, $voucherDate);
         $stmt = $pdo->prepare('
-            INSERT INTO vouchers (code, type, warehouse_id, voucher_date, reason, client_token, created_by)
-            VALUES (?, ?, ?, ?, ?, ?, ?)
+            INSERT INTO vouchers (code, type, warehouse_id, to_warehouse_id, voucher_date, reason, client_token, created_by)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?)
         ');
-        $stmt->execute([$code, $type, $warehouseId, $voucherDate, $reason === '' ? null : $reason, $token, $user['id']]);
+        $stmt->execute([$code, $type, $warehouseId, $toWarehouseId, $voucherDate, $reason === '' ? null : $reason, $token, $user['id']]);
         $voucherId = (int) $pdo->lastInsertId();
 
         $stmt = $pdo->prepare('INSERT INTO voucher_lines (voucher_id, item_id, batch_id, quantity) VALUES (?, ?, ?, ?)');
@@ -573,4 +584,25 @@ function applyStockChange(PDO $pdo, array $change): void
         ');
         $stmt->execute([...$key, $change['delta']]);
     }
+}
+
+// =====================================================================
+// HIỂN THỊ THEO LOẠI PHIẾU
+// =====================================================================
+
+/** Đọc loại phiếu từ request, chỉ chấp nhận các loại trong $allowed (mặc định: loại đầu tiên) */
+function requestedVoucherType($value, array $allowed = ['IMPORT', 'EXPORT', 'TRANSFER', 'ADJUSTMENT']): string
+{
+    return in_array($value, $allowed, true) ? $value : $allowed[0];
+}
+
+/** Tiêu đề trang danh sách và mục menu tương ứng của từng loại phiếu */
+function voucherPageInfo(string $type): array
+{
+    return [
+        'IMPORT'     => ['title' => 'Phiếu Nhập Kho',   'menu' => 'imports',     'create' => 'Lập phiếu nhập'],
+        'EXPORT'     => ['title' => 'Phiếu Xuất Kho',   'menu' => 'exports',     'create' => 'Lập phiếu xuất'],
+        'TRANSFER'   => ['title' => 'Phiếu Điều Chuyển', 'menu' => 'transfers',  'create' => 'Lập phiếu điều chuyển'],
+        'ADJUSTMENT' => ['title' => 'Phiếu Điều Chỉnh', 'menu' => 'adjustments', 'create' => null],
+    ][$type];
 }
