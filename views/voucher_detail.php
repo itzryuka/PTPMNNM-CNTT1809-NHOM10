@@ -82,6 +82,9 @@ require __DIR__ . '/layout/header.php';
                         <?php if ($voucher['reference_code']): ?>
                             <div><dt>Điều chỉnh cho chứng từ</dt><dd><a class="link-strong" href="voucher_detail.php?id=<?= (int) $voucher['reference_voucher_id'] ?>"><?= e($voucher['reference_code']) ?></a></dd></div>
                         <?php endif; ?>
+                        <?php if ($voucher['stock_count_code']): ?>
+                            <div><dt>Sinh từ đợt kiểm kê</dt><dd><a class="link-strong" href="stock_count_detail.php?id=<?= (int) $voucher['stock_count_id'] ?>"><?= e($voucher['stock_count_code']) ?></a></dd></div>
+                        <?php endif; ?>
                         <?php if (!$isPending): ?>
                             <div>
                                 <dt><?= $voucher['status'] === 'APPROVED' ? 'Người xác nhận' : 'Người từ chối' ?></dt>
@@ -104,6 +107,7 @@ require __DIR__ . '/layout/header.php';
                                     <th>Hạn SD</th>
                                     <th class="text-right">Số lượng</th>
                                     <th>ĐVT</th>
+                                    <?php if ($type === 'ADJUSTMENT'): ?><th>Lý do từng dòng</th><?php endif; ?>
                                     <?php if ($isPending && $decreases): ?>
                                         <th class="text-right">Tồn hiện tại</th>
                                         <th>Kiểm tra</th>
@@ -121,6 +125,7 @@ require __DIR__ . '/layout/header.php';
                                         <td><?= $line['expiry_date'] ? formatDate($line['expiry_date']) : '—' ?></td>
                                         <td class="text-right"><strong><?= formatQty($line['quantity']) ?></strong></td>
                                         <td class="muted"><?= e($line['unit']) ?></td>
+                                        <?php if ($type === 'ADJUSTMENT'): ?><td><?= $line['note'] !== null ? e($line['note']) : '—' ?></td><?php endif; ?>
                                         <?php if ($isPending && $decreases): ?>
                                             <td class="text-right"><?= formatQty($line['current_qty']) ?></td>
                                             <td>
