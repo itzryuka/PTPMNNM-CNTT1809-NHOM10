@@ -2,7 +2,7 @@
 // Chứng từ kho: lập phiếu, duyệt (ghi sổ phát sinh + cập nhật tồn trong 1 transaction), từ chối
 
 /** Lỗi nghiệp vụ: thông báo hiển thị thẳng cho người dùng */
-class VoucherException extends RuntimeException
+class VoucherException extends AppException
 {
 }
 
@@ -421,12 +421,6 @@ function isValidDate(string $value): bool
 {
     $date = DateTime::createFromFormat('Y-m-d', $value);
     return $date !== false && $date->format('Y-m-d') === $value;
-}
-
-// So sánh số lượng DECIMAL(15,3) bằng số nguyên phần nghìn, tránh sai số float
-function toMilli($qty): int
-{
-    return (int) round((float) $qty * 1000);
 }
 
 // =====================================================================

@@ -29,6 +29,8 @@ Ngoài 5 phép thử bắt buộc, bộ test còn kiểm tra:
 - **Kiểm kê:** không mở 2 đợt cho 1 kho; nhân viên không mở / duyệt được đợt; nhân viên kho khác không nhập được số đếm; kho đang kiểm kê thì phiếu nhập / xuất / điều chuyển không duyệt được, chốt đợt xong thì duyệt được; đợt không lệch thì không sinh phiếu; hủy đợt không ghi phát sinh.
 - **Điều chuyển:** kho đến trùng kho đi, điều chuyển từ kho không phụ trách, vượt tồn kho đi đều bị chặn; nhân viên kho đến thấy phiếu chuyển tới.
 - **Nhập / xuất:** nhập lô mới, từ chối phiếu, chặn xuất vượt tồn / lô hết hạn / dòng trùng.
+- **Danh mục kho, mặt hàng:** nhân viên không thêm / sửa được; trùng mã, mã sai định dạng bị chặn; chưa có lịch sử thì xóa thật, đã có lịch sử thì chuyển "ngừng dùng" và không lập phiếu được nữa; còn tồn / còn phiếu chờ duyệt thì không xóa; kho mới tự phân quyền cho người tạo và ADMIN.
+- **Nhập file CSV:** đọc file Excel lưu ra (BOM, dấu chấm phẩy, tiêu đề tiếng Việt), báo thiếu cột / sai mã hóa; file có 1 dòng lỗi thì báo đúng số dòng và **không ghi dòng nào**.
 - **Sổ phát sinh:** không UPDATE / DELETE được; không có tồn âm; cuối cùng **tồn khớp tổng sổ phát sinh ở mọi kho / lô**.
 
 ## Kiểm tra lại sau khi sửa code

@@ -86,3 +86,52 @@ function asset(string $basePath, string $path): string
     $version = is_file($file) ? filemtime($file) : 0;
     return $basePath . $path . '?v=' . $version;
 }
+
+/** Lỗi nghiệp vụ: thông báo được hiển thị thẳng cho người dùng (lỗi CSDL thì không) */
+class AppException extends RuntimeException
+{
+}
+
+/** Thay đổi danh mục (kho, mặt hàng) chỉ dành cho quản lý / quản trị */
+function assertCatalogManager(array $user): void
+{
+    if (!in_array($user['role'], ['ADMIN', 'MANAGER'], true)) {
+        throw new AppException('Chỉ quản lý / quản trị mới được thay đổi danh mục.');
+    }
+}
+
+// So sánh số lượng DECIMAL(15,3) bằng số nguyên phần nghìn, tránh sai số float
+function toMilli($qty): int
+{
+    return (int) round((float) $qty * 1000);
+}
+
+/**
+ * Trang quay về sau khi xử lý form danh mục:
+ *   return_to=detail -> trang chi tiết của bản ghi
+ *   còn lại          -> trang danh sách, giữ nguyên bộ lọc / trang đang xem (return_query)
+ */
+function catalogReturnUrl(string $listPage, string $detailPage, array $post, int $id): string
+{
+    if (($post['return_to'] ?? '') === 'detail' && $id > 0) {
+        return "../views/$detailPage?id=$id";
+    }
+    parse_str((string) ($post['return_query'] ?? ''), $query);
+    $query = array_intersect_key($query, array_flip(['q', 'status', 'size', 'page']));
+    return "../views/$listPage" . ($query ? '?' . http_build_query($query) : '');
+}
+
+/** Giữ dữ liệu đã nhập + lỗi của popup qua lần chuyển trang, để trang mở lại popup kèm lỗi */
+function keepModalState(string $key, array $values, string $error): void
+{
+    startSession();
+    $_SESSION[$key] = ['values' => $values, 'error' => $error];
+}
+
+function takeModalState(string $key): ?array
+{
+    startSession();
+    $state = $_SESSION[$key] ?? null;
+    unset($_SESSION[$key]);
+    return is_array($state) ? $state : null;
+}
