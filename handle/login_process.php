@@ -1,37 +1,29 @@
 <?php
-session_start();
-require_once '../functions/db_connection.php';
-require_once '../functions/auth.php'; // Thêm dòng này
+// Xử lý đăng nhập / đăng xuất
+require_once __DIR__ . '/../functions/db_connection.php';
+require_once __DIR__ . '/../functions/helpers.php';
+require_once __DIR__ . '/../functions/auth.php';
 
-if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['login'])) {
-    handleLogin();
+if ($_SERVER['REQUEST_METHOD'] !== 'POST') {
+    redirect('../views/login.php');
+}
+verifyCsrf();
+
+if (($_POST['action'] ?? '') === 'logout') {
+    logoutUser();
+    redirect('../views/login.php');
 }
 
-function handleLogin() {
-    $conn = getDbConnection();
-    $username = $_POST['username'] ?? '';
-    $password = $_POST['password'] ?? '';
+$username = trim((string) ($_POST['username'] ?? ''));
+$password = (string) ($_POST['password'] ?? '');
 
-    if (empty($username) || empty($password)) {
-        $_SESSION['error'] = 'Vui lòng nhập đầy đủ username và password!';
-        header('Location: ../index.php');
-        exit();
+try {
+    if ($username !== '' && attemptLogin(getDbConnection(), $username, $password)) {
+        redirect('../index.php');
     }
-
-    $user = authenticateUser($conn, $username, $password);
-    if ($user) {
-        $_SESSION['user_id'] = $user['id'];
-        $_SESSION['username'] = $user['username'];
-        $_SESSION['role'] = $user['role'];
-        $_SESSION['success'] = 'Đăng nhập thành công!';
-        mysqli_close($conn);
-        header('Location: ../views/student.php');
-        exit();
-    }
-
-    $_SESSION['error'] = 'Tên đăng nhập hoặc mật khẩu không đúng!';
-    mysqli_close($conn);
-    header('Location: ../index.php');
-    exit();
+    setFlash('error', 'Sai tên đăng nhập hoặc mật khẩu.');
+} catch (PDOException $e) {
+    setFlash('error', 'Không kết nối được CSDL: ' . $e->getMessage());
 }
-?>
+$_SESSION['login_username'] = $username;
+redirect('../views/login.php');
