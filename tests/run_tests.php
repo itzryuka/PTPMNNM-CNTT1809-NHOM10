@@ -21,6 +21,9 @@ require_once __DIR__ . '/../functions/helpers.php';
 require_once __DIR__ . '/../functions/auth.php';
 require_once __DIR__ . '/../functions/voucher_functions.php';
 require_once __DIR__ . '/../functions/stock_count_functions.php';
+require_once __DIR__ . '/../functions/csv_functions.php';
+require_once __DIR__ . '/../functions/item_functions.php';
+require_once __DIR__ . '/../functions/warehouse_functions.php';
 
 $options = getopt('', ['keep', 'mysql:']);
 $results = ['pass' => 0, 'fail' => 0, 'skip' => 0];
@@ -484,6 +487,75 @@ try {
     check('Không ghi phát sinh khi bị chặn, phiếu vẫn chờ duyệt', movementCount() === $before && voucherStatus($pendingHn) === 'PENDING');
     $pdo->exec("UPDATE stock_counts SET status = 'CANCELLED' WHERE code = 'KK-TEST'");
     check('Hủy đợt kiểm kê xong thì duyệt được', errorOf(fn () => approveVoucher($pdo, $manager, $pendingHn)) === '');
+
+    // -----------------------------------------------------------------
+    section('DANH MỤC MẶT HÀNG, KHO VÀ NHẬP FILE');
+    // -----------------------------------------------------------------
+    check('Nhân viên không thêm được mặt hàng',
+        str_contains(errorOf(fn () => createItem($pdo, $staffA, ['sku' => 'SP900', 'name' => 'X', 'unit' => 'Hộp'])), 'Chỉ quản lý'));
+    $newItem = createItem($pdo, $manager, ['sku' => 'sp900', 'name' => 'Nước cam test', 'unit' => 'Chai']);
+    check('Thêm mặt hàng: mã được viết hoa', scalar('SELECT sku FROM items WHERE id = ?', [$newItem]) === 'SP900');
+    check('Trùng mã hàng bị từ chối', str_contains(errorOf(fn () => createItem($pdo, $manager, ['sku' => 'SP900', 'name' => 'Y', 'unit' => 'Chai'])), 'đã tồn tại'));
+    check('Mã hàng có dấu cách / ký tự lạ bị từ chối', str_contains(errorOf(fn () => createItem($pdo, $manager, ['sku' => 'SP 9', 'name' => 'Y', 'unit' => 'Chai'])), 'Mã hàng chỉ gồm'));
+    check('Sửa sang mã đã thuộc mặt hàng khác bị từ chối',
+        str_contains(errorOf(fn () => updateItem($pdo, $manager, $newItem, ['sku' => 'SP001', 'name' => 'Y', 'unit' => 'Chai'])), 'mặt hàng khác'));
+    check('Xóa mặt hàng chưa có lịch sử: xóa thật', removeItem($pdo, $manager, $newItem) === 'deleted' && getItem($pdo, $newItem) === null);
+    check('Không xóa được mặt hàng còn tồn', str_contains(errorOf(fn () => removeItem($pdo, $manager, 1)), 'còn tồn'));
+
+    $usedItem = createItem($pdo, $manager, ['sku' => 'SP901', 'name' => 'Hàng có lô, hết tồn', 'unit' => 'Gói']);
+    $pdo->prepare("INSERT INTO batches (item_id, batch_no, expiry_date) VALUES (?, 'L-OLD', '2030-01-01')")->execute([$usedItem]);
+    check('Mặt hàng đã có lịch sử (lô): chuyển ngừng dùng thay vì xóa',
+        removeItem($pdo, $manager, $usedItem) === 'deactivated' && (int) scalar('SELECT is_active FROM items WHERE id = ?', [$usedItem]) === 0);
+    $usedBatch = (int) scalar("SELECT id FROM batches WHERE batch_no = 'L-OLD'");
+    check('Mặt hàng ngừng dùng không lập phiếu được', str_contains(errorOf(fn () => createVoucher($pdo, $staffA, [
+        'type' => 'IMPORT', 'warehouse_id' => 1, 'voucher_date' => date('Y-m-d'), 'client_token' => newToken(),
+        'lines' => [['item_id' => $usedItem, 'batch_id' => $usedBatch, 'quantity' => '1']],
+    ])), 'không tồn tại'));
+    restoreItem($pdo, $manager, $usedItem);
+    check('Dùng lại mặt hàng', (int) scalar('SELECT is_active FROM items WHERE id = ?', [$usedItem]) === 1);
+
+    // Đọc CSV kiểu Excel: có BOM, dấu chấm phẩy, tiêu đề tiếng Việt, dòng trống
+    $csv  = "\xEF\xBB\xBFMã hàng;Tên mặt hàng;Đơn vị tính;Mô tả\nsp950;Bánh test;Hộp;\n\n SP001 ;Sữa tươi Vinamilk 1L (mới);Hộp;cập nhật\n";
+    $rows = parseCsv($csv, ITEM_CSV_COLUMNS, ['sku', 'name', 'unit']);
+    check('Đọc CSV: BOM, dấu chấm phẩy, bỏ dòng trống, giữ số dòng gốc', array_keys($rows) === [2, 4] && $rows[4]['sku'] === 'SP001' && $rows[2]['name'] === 'Bánh test');
+    $error = errorOf(fn () => parseCsv("Mã hàng,Tên mặt hàng\nA,B\n", ITEM_CSV_COLUMNS, ['sku', 'name', 'unit']));
+    check('CSV thiếu cột bắt buộc bị từ chối', str_contains($error, 'Thiếu cột "đơn vị tính"'), $error);
+    check('CSV không phải UTF-8 bị từ chối', str_contains(errorOf(fn () => parseCsv("M\xE3 h\xE0ng\n", ITEM_CSV_COLUMNS, ['sku'])), 'UTF-8'));
+
+    $itemsBefore = (int) scalar('SELECT COUNT(*) FROM items');
+    $badRows = $rows + [5 => ['sku' => 'SP951', 'name' => '', 'unit' => 'Hộp', 'description' => '']];
+    $error = errorOf(fn () => importItems($pdo, $manager, $badRows));
+    check('Nhập file có 1 dòng lỗi: báo đúng dòng, không ghi dòng nào',
+        str_contains($error, 'Dòng 5') && (int) scalar('SELECT COUNT(*) FROM items') === $itemsBefore, $error);
+    [$created, $updated] = importItems($pdo, $manager, $rows);
+    check('Nhập file hợp lệ: 1 thêm mới, 1 cập nhật', $created === 1 && $updated === 1
+        && scalar("SELECT name FROM items WHERE sku = 'SP001'") === 'Sữa tươi Vinamilk 1L (mới)');
+
+    $warehouseId = createWarehouse($pdo, $manager, ['code' => 'kho-ct', 'name' => 'Kho Cần Thơ', 'address' => '']);
+    check('Thêm kho: người tạo và ADMIN được phân quyền ngay',
+        (int) scalar('SELECT COUNT(*) FROM user_warehouses WHERE warehouse_id = ? AND user_id IN (1, 2)', [$warehouseId]) === 2);
+    check('Trùng mã kho bị từ chối', str_contains(errorOf(fn () => createWarehouse($pdo, $manager, ['code' => 'KHO-CT', 'name' => 'X'])), 'đã tồn tại'));
+    $manager = loadUser($pdo, 2);                       // nạp lại quyền kho sau khi được cấp kho mới
+    check('Không xóa được kho còn hàng', str_contains(errorOf(fn () => removeWarehouse($pdo, $manager, 2)), 'còn hàng'));
+    check('Nhân viên kho HN không sửa được kho HCM',
+        str_contains(errorOf(fn () => updateWarehouse($pdo, ['role' => 'MANAGER'] + $staffA, 2, ['code' => 'KHO-HCM', 'name' => 'X'])), 'không có quyền'));
+    check('Xóa kho mới chưa có lịch sử: xóa thật', removeWarehouse($pdo, $manager, $warehouseId) === 'deleted' && getWarehouse($pdo, $warehouseId) === null);
+
+    [$created] = importWarehouses($pdo, $manager, parseCsv("Mã kho,Tên kho,Địa chỉ\nKHO-HP,Kho Hải Phòng,Lê Hồng Phong\n", WAREHOUSE_CSV_COLUMNS, ['code', 'name']));
+    $hpId = (int) scalar("SELECT id FROM warehouses WHERE code = 'KHO-HP'");
+    check('Nhập kho từ file: thêm kho và phân quyền', $created === 1 && (int) scalar('SELECT COUNT(*) FROM user_warehouses WHERE warehouse_id = ? AND user_id = 2', [$hpId]) === 1);
+    $manager = loadUser($pdo, 2);
+    $rejected = createVoucher($pdo, $manager, [
+        'type' => 'IMPORT', 'warehouse_id' => $hpId, 'voucher_date' => date('Y-m-d'), 'client_token' => newToken(),
+        'lines' => [['item_id' => 1, 'batch_id' => 1, 'quantity' => '1']],
+    ]);
+    check('Không xóa được kho còn phiếu chờ duyệt', str_contains(errorOf(fn () => removeWarehouse($pdo, $manager, $hpId)), 'chờ duyệt'));
+    rejectVoucher($pdo, $manager, $rejected);
+    check('Kho đã có chứng từ (dù trống): chuyển ngừng hoạt động thay vì xóa', removeWarehouse($pdo, $manager, $hpId) === 'deactivated');
+    check('Kho ngừng hoạt động không lập phiếu được', str_contains(errorOf(fn () => createVoucher($pdo, $manager, [
+        'type' => 'IMPORT', 'warehouse_id' => $hpId, 'voucher_date' => date('Y-m-d'), 'client_token' => newToken(),
+        'lines' => [['item_id' => 1, 'batch_id' => 1, 'quantity' => '1']],
+    ])), 'ngừng hoạt động'));
 
     // -----------------------------------------------------------------
     section('SỔ PHÁT SINH - BẤT BIẾN VÀ ĐỐI CHIẾU');

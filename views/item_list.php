@@ -16,13 +16,17 @@ $status = in_array($_GET['status'] ?? '', ['active', 'inactive', 'all'], true) ?
 $allowedWarehouses = $user['warehouses'];
 // Thêm / sửa / xóa / nhập file: chỉ quản lý (server cũng kiểm tra lại trong handle/item_process.php)
 $canManage = isManager($user);
+// Lần lưu trước trong popup bị lỗi -> mở lại popup kèm dữ liệu đã nhập và lỗi
+$modalState = takeModalState('item_modal');
 
 // ===== (3) TRUY VẤN CSDL =====
 $items      = [];
+$units      = [];
 $totalItems = 0;
 $dbError    = '';
 try {
     $pdo        = getDbConnection();
+    $units      = getUnitSuggestions($pdo);
     $totalItems = countItems($pdo, $keyword, $status);
     $totalPages = max(1, (int) ceil($totalItems / $pageSize));
     $page       = min($page, $totalPages);
@@ -50,17 +54,18 @@ require __DIR__ . '/layout/header.php';
                         <form class="inline-form" method="post" action="../handle/item_process.php" enctype="multipart/form-data">
                             <input type="hidden" name="csrf_token" value="<?= e(csrfToken()) ?>">
                             <input type="hidden" name="action" value="import">
+                            <input type="hidden" name="return_query" value="<?= e($_SERVER['QUERY_STRING'] ?? '') ?>">
                             <input type="file" name="file" id="importFile" accept=".csv" hidden>
                             <button type="button" class="btn btn-import" data-file-trigger="importFile" title="Nhập file CSV theo mẫu: mã đã có thì cập nhật, mã mới thì thêm"><i class="fas fa-file-excel"></i> Nhập Excel</button>
                         </form>
-                        <a class="btn btn-primary" href="item_form.php"><i class="fas fa-plus"></i> Thêm Mới</a>
+                        <button class="btn btn-primary" type="button" data-modal-open="itemModal" data-modal-title="Thêm mặt hàng" data-fill='{"action":"create"}'><i class="fas fa-plus"></i> Thêm Mới</button>
                     <?php endif; ?>
                 </div>
 
                 <div class="toolbar-bottom">
                     <div class="toolbar-bottom-left">
                         <?php if ($canManage): ?>
-                            <button class="btn btn-danger hidden" id="btnDeleteSelected" type="submit" form="bulkForm"
+                            <button class="btn btn-danger hidden" id="btnDeleteSelected" type="submit" form="bulkForm" data-confirm-ok="Xóa"
                                     data-confirm="Xóa các mặt hàng đã chọn? Mặt hàng đã có lịch sử sẽ được chuyển sang ngừng dùng.">
                                 <i class="fas fa-trash-alt"></i> Xóa đã chọn
                             </button>
@@ -123,10 +128,12 @@ require __DIR__ . '/layout/header.php';
                                     <td class="row-actions">
                                         <a href="item_detail.php?id=<?= $itemId ?>" title="Xem chi tiết"><i class="fas fa-eye icon-view"></i></a>
                                         <?php if ($canManage): ?>
-                                            <a href="item_form.php?id=<?= $itemId ?>" title="Chỉnh sửa"><i class="fas fa-edit icon-edit"></i></a>
+                                            <?php $fill = ['action' => 'update', 'id' => $itemId, 'sku' => $item['sku'], 'name' => $item['name'], 'unit' => $item['unit'], 'description' => $item['description'] ?? '']; ?>
+                                            <button class="icon-btn" type="button" title="Chỉnh sửa" data-modal-open="itemModal"
+                                                    data-modal-title="Sửa mặt hàng <?= e($item['sku']) ?>" data-fill="<?= e(json_encode($fill, JSON_UNESCAPED_UNICODE)) ?>"><i class="fas fa-edit icon-edit"></i></button>
                                             <?php if ($item['is_active']): ?>
-                                                <button class="icon-btn" type="submit" form="deleteForm" name="id" value="<?= $itemId ?>" title="Xóa"
-                                                        data-confirm="Xóa mặt hàng <?= e($item['sku']) ?>? Nếu đã có lịch sử nhập / xuất, mặt hàng sẽ được chuyển sang ngừng dùng."><i class="fas fa-trash-alt icon-delete"></i></button>
+                                                <button class="icon-btn" type="submit" form="deleteForm" name="id" value="<?= $itemId ?>" title="Xóa" data-confirm-ok="Xóa"
+                                                        data-confirm="Xóa mặt hàng <?= e($item['sku'] . ' - ' . $item['name']) ?>? Nếu đã có lịch sử nhập / xuất, mặt hàng sẽ được chuyển sang ngừng dùng."><i class="fas fa-trash-alt icon-delete"></i></button>
                                             <?php else: ?>
                                                 <button class="icon-btn restore" type="submit" form="restoreForm" name="id" value="<?= $itemId ?>" title="Dùng lại"><i class="fas fa-undo"></i></button>
                                             <?php endif; ?>
@@ -145,8 +152,11 @@ require __DIR__ . '/layout/header.php';
                     <form id="<?= $formId ?>" method="post" action="../handle/item_process.php">
                         <input type="hidden" name="csrf_token" value="<?= e(csrfToken()) ?>">
                         <input type="hidden" name="action" value="<?= $formAction ?>">
+                        <input type="hidden" name="return_query" value="<?= e($_SERVER['QUERY_STRING'] ?? '') ?>">
                     </form>
                 <?php endforeach; ?>
+
+                <?php $modalReturnTo = 'list'; require __DIR__ . '/partials/item_modal.php'; ?>
             <?php endif; ?>
 
             <!-- Pagination -->

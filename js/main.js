@@ -73,3 +73,16 @@ if (pageJumpSelect) {
         goTo({ page: this.value });
     });
 }
+
+// === Nút "Nhập Excel": mở hộp chọn file, chọn xong tự gửi form ===
+document.querySelectorAll('[data-file-trigger]').forEach(button => {
+    const input = document.getElementById(button.dataset.fileTrigger);
+    if (!input) return;
+    button.addEventListener('click', () => input.click());
+    input.addEventListener('change', () => {
+        if (input.files.length) {
+            button.disabled = true;
+            input.form.submit();
+        }
+    });
+});
