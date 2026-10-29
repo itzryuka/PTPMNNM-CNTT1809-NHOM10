@@ -5,7 +5,7 @@
                 <div class="page-size">
                     Hiển thị
                     <select id="pageSize">
-                        <?php foreach ([10, 20, 30, 50] as $size): ?>
+                        <?php foreach (PAGE_SIZES as $size): ?>
                             <option value="<?= $size ?>" <?= $size === $pageSize ? 'selected' : '' ?>><?= $size ?></option>
                         <?php endforeach; ?>
                     </select>

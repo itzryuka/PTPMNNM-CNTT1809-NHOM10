@@ -44,7 +44,7 @@ $selectedToWarehouse = (int) ($old['to_warehouse_id'] ?? 0);
 $isImport     = $type === 'IMPORT';
 $fromLabel    = ['IMPORT' => 'Kho nhập', 'EXPORT' => 'Kho xuất', 'TRANSFER' => 'Kho đi'][$type];
 $reasonLabel  = [
-    'IMPORT'   => ['Nhà cung cấp / người giao hàng / ghi chú', 'Vd: Nhập hàng từ NCC Vinamilk, người giao: Anh Tuấn'],
+    'IMPORT'   => ['Nhà cung cấp / người giao hàng / ghi chú', 'Vd: Nhập hàng từ NCC Vinamilk, người giao: Nguyễn Văn A, ghi chú: Hàng mẫu'],
     'EXPORT'   => ['Lý do xuất / người nhận hàng', 'Vd: Xuất bán cho Siêu thị Hòa Bình'],
     'TRANSFER' => ['Lý do điều chuyển / người vận chuyển', 'Vd: Bổ sung hàng cho Kho HCM, xe 51C-123.45'],
 ][$type];
@@ -117,7 +117,7 @@ require __DIR__ . '/layout/header.php';
                         <button type="button" class="btn btn-export btn-sm" id="addLine"><i class="fas fa-plus"></i> Thêm dòng</button>
                     </div>
                     <?php if (!$isImport): ?>
-                        <p class="form-hint">Chỉ hiện các lô còn tồn tại <?= $type === 'TRANSFER' ? 'kho đi' : 'kho đã chọn' ?>, lô hết hạn sớm xếp trước. Số tồn được kiểm tra lại khi duyệt phiếu.</p>
+                        <p class="form-hint">Chỉ hiện các lô còn hàng <strong>có thể xuất</strong> tại <?= $type === 'TRANSFER' ? 'kho đi' : 'kho đã chọn' ?> (đã trừ hàng đang giữ cho phiếu đã duyệt), lô hết hạn sớm xếp trước. Khi duyệt, hệ thống kiểm tra lại và giữ chỗ số hàng này.</p>
                     <?php else: ?>
                         <p class="form-hint">Chọn lô có sẵn hoặc chọn "+ Tạo lô mới" để khai báo số lô và hạn sử dụng.</p>
                     <?php endif; ?>

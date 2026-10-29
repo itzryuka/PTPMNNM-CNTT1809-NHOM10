@@ -16,16 +16,17 @@ $menuGroups = [
         'links' => [
             'warehouses' => ['Danh sách kho', 'views/warehouse_list.php'],
             'items'      => ['Mặt Hàng', 'views/item_list.php'],
-            'batches'    => ['Lô Hàng', '#'],
+            'batches'    => ['Lô Hàng', 'views/batch_list.php'],
         ],
     ],
     'operations' => [
         'icon'  => 'fa-exchange-alt',
         'label' => 'Nghiệp Vụ Kho',
         'links' => [
-            'imports'   => ['Phiếu Nhập Kho', 'views/voucher_list.php?type=IMPORT'],
-            'exports'   => ['Phiếu Xuất Kho', 'views/voucher_list.php?type=EXPORT'],
-            'transfers' => ['Điều Chuyển', 'views/voucher_list.php?type=TRANSFER'],
+            'imports'           => ['Phiếu Nhập Kho', 'views/voucher_list.php?type=IMPORT'],
+            'exports'           => ['Phiếu Xuất Kho', 'views/voucher_list.php?type=EXPORT'],
+            'transfer_requests' => ['Yêu Cầu Điều Chuyển', 'views/transfer_request_list.php'],
+            'transfers'         => ['Điều Chuyển', 'views/voucher_list.php?type=TRANSFER'],
         ],
     ],
     'counting' => [
@@ -41,20 +42,24 @@ $menuGroups = [
         'icon'  => 'fa-chart-line',
         'label' => 'Tra cứu & Báo cáo',
         'links' => [
-            'current_stock' => ['Tồn kho hiện tại', '#'],
-            'ledger'        => ['Sổ phát sinh', '#'],
-            'count_report'  => ['Báo cáo kiểm kê', '#'],
-        ],
-    ],
-    'system' => [
-        'icon'  => 'fa-user-shield',
-        'label' => 'Hệ Thống & Quyền',
-        'links' => [
-            'users'           => ['Quản lý tài khoản', '#'],
-            'user_warehouses' => ['Phân quyền kho', '#'],
+            'current_stock'  => ['Tồn kho hiện tại', 'views/report_stock.php'],
+            'ledger_summary' => ['Nhập – xuất – tồn', 'views/report_ledger.php?view=summary'],
+            'ledger'         => ['Thẻ kho / sổ phát sinh', 'views/report_ledger.php?view=detail'],
+            'count_report'   => ['Báo cáo kiểm kê', 'views/report_stock_count.php'],
+            'reconciliation' => ['Đối chiếu sổ', 'views/report_reconciliation.php'],
         ],
     ],
 ];
+// Cấp tài khoản và phân quyền: chỉ quản trị thấy (trang và handle cũng tự kiểm tra lại)
+if (isAdmin($user)) {
+    $menuGroups['system'] = [
+        'icon'  => 'fa-user-shield',
+        'label' => 'Hệ Thống & Quyền',
+        'links' => [
+            'users' => ['Tài khoản & phân quyền kho', 'views/account_list.php'],
+        ],
+    ];
+}
 
 function menuHref(string $href, string $basePath): string
 {
@@ -66,7 +71,8 @@ function menuHref(string $href, string $basePath): string
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title><?= e($pageTitle) ?> - Hệ Thống Quản Lý Kho</title>
+    <title><?= e($pageTitle) ?> · <?= APP_NAME ?></title>
+    <link rel="icon" type="image/svg+xml" href="<?= e(asset($basePath, 'images/logo.svg')) ?>">
     <link href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.0.0/css/all.min.css" rel="stylesheet">
     <link href="<?= e(asset($basePath, 'css/style.css')) ?>" rel="stylesheet">
 </head>
@@ -74,9 +80,10 @@ function menuHref(string $href, string $basePath): string
 
     <!-- SIDEBAR -->
     <div class="sidebar" id="sidebar">
-        <div class="sidebar-header">
-            <h2>ERP SYSTEM</h2>
-        </div>
+        <a class="sidebar-header" href="<?= $basePath ?>index.php" title="<?= APP_NAME ?> - <?= APP_TAGLINE ?>">
+            <img class="brand-logo" src="<?= e(asset($basePath, 'images/logo.svg')) ?>" alt="">
+            <span class="brand-name">Omni<span>Stock</span></span>
+        </a>
         <ul class="menu">
             <li class="menu-item">
                 <a class="menu-btn<?= $activeMenu === 'dashboard' ? ' current' : '' ?>" href="<?= $basePath ?>index.php">
@@ -91,15 +98,21 @@ function menuHref(string $href, string $basePath): string
                     <div class="menu-btn" onclick="toggleSubMenu(this)">
                         <i class="fas <?= $menuGroup['icon'] ?> icon"></i>
                         <span class="menu-text"><?= e($menuGroup['label']) ?></span>
-                        <i class="fas fa-chevron-down arrow"></i>
+                        <i class="fas fa-chevron-right arrow"></i>
                     </div>
-                    <ul class="sub-menu">
-                        <?php foreach ($menuGroup['links'] as $menuKey => [$menuLabel, $menuLink]): ?>
-                            <li>
-                                <a href="<?= e(menuHref($menuLink, $basePath)) ?>"<?= $menuKey === $activeMenu ? ' class="current"' : '' ?>><?= e($menuLabel) ?></a>
-                            </li>
-                        <?php endforeach; ?>
-                    </ul>
+                    <!-- sub-menu-wrap: khung trượt xuống; --i: thứ tự để các mục con rơi xuống lần lượt -->
+                    <div class="sub-menu-wrap">
+                        <div class="sub-menu-clip">
+                            <ul class="sub-menu">
+                                <?php $menuIndex = 0; ?>
+                                <?php foreach ($menuGroup['links'] as $menuKey => [$menuLabel, $menuLink]): ?>
+                                    <li style="--i: <?= $menuIndex++ ?>">
+                                        <a href="<?= e(menuHref($menuLink, $basePath)) ?>"<?= $menuKey === $activeMenu ? ' class="current"' : '' ?>><?= e($menuLabel) ?></a>
+                                    </li>
+                                <?php endforeach; ?>
+                            </ul>
+                        </div>
+                    </div>
                 </li>
             <?php endforeach; ?>
         </ul>
@@ -124,11 +137,13 @@ function menuHref(string $href, string $basePath): string
 
             <div class="nav-right">
                 <i class="fas fa-bell" title="Thông báo"></i>
-                <div class="user-info">
-                    <strong><?= e($user['full_name']) ?></strong>
-                    <span><?= e(roleLabel($user['role'])) ?></span>
-                </div>
-                <div class="avatar" title="<?= e($user['username']) ?>"><?= e(userInitials($user['full_name'])) ?></div>
+                <a class="user-link" href="<?= $basePath ?>views/change_password.php" title="<?= e($user['username']) ?> · Đổi mật khẩu">
+                    <div class="user-info">
+                        <strong><?= e($user['full_name']) ?></strong>
+                        <span><?= e(roleLabel($user['role'])) ?></span>
+                    </div>
+                    <div class="avatar"><?= e(userInitials($user['full_name'])) ?></div>
+                </a>
                 <form method="post" action="<?= $basePath ?>handle/login_process.php">
                     <input type="hidden" name="csrf_token" value="<?= e(csrfToken()) ?>">
                     <input type="hidden" name="action" value="logout">

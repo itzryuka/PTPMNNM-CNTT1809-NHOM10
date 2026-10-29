@@ -60,7 +60,7 @@
             }
             lots.forEach(s => {
                 const expired = s.expiry_date !== null && s.expiry_date < data.today;
-                const label = `${s.batch_no} (HSD ${formatDate(s.expiry_date)}) — tồn ${formatQty(s.quantity)}${expired ? ' — ĐÃ HẾT HẠN' : ''}`;
+                const label = `${s.batch_no} (HSD ${formatDate(s.expiry_date)}) — có thể xuất ${formatQty(s.quantity)}${expired ? ' — ĐÃ HẾT HẠN' : ''}`;
                 select.append(option(s.batch_id, label, String(s.batch_id) === String(selected), expired));
             });
         }

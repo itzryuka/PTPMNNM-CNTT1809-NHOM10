@@ -34,11 +34,25 @@ function countStockCounts(PDO $pdo, array $filters, array $allowedWarehouses): i
     return (int) $stmt->fetchColumn();
 }
 
-function getStockCounts(PDO $pdo, array $filters, array $allowedWarehouses, int $limit, int $offset): array
+// Cột sắp xếp được của danh sách đợt kiểm kê (khóa trên URL => biểu thức SQL)
+const STOCK_COUNT_SORT_COLUMNS = [
+    'created'   => 'sc.created_at',
+    'code'      => 'sc.code',
+    'warehouse' => 'w.name',
+    'creator'   => 'u.full_name',
+    'counted'   => 'counted_count',
+    'diffs'     => 'diff_count',
+    'status'    => 'sc.status',
+];
+
+/** $sort = [khóa STOCK_COUNT_SORT_COLUMNS, 'asc'|'desc']; mặc định đợt mới nhất trước */
+function getStockCounts(PDO $pdo, array $filters, array $allowedWarehouses, int $limit, int $offset,
+                        array $sort = ['created', 'desc']): array
 {
     [$where, $params] = buildStockCountCondition($filters, $allowedWarehouses);
-    $limit  = max(1, $limit);
-    $offset = max(0, $offset);
+    $orderBy = orderByClause(STOCK_COUNT_SORT_COLUMNS, $sort, 'sc.id DESC');
+    $limit   = max(1, $limit);
+    $offset  = max(0, $offset);
 
     $stmt = $pdo->prepare("
         SELECT sc.id, sc.code, sc.status, sc.note, sc.created_at, sc.adjustment_voucher_id,
@@ -53,7 +67,7 @@ function getStockCounts(PDO $pdo, array $filters, array $allowedWarehouses, int 
         LEFT JOIN stock_count_lines l ON l.count_id = sc.id
         WHERE $where
         GROUP BY sc.id, sc.code, sc.status, sc.note, sc.created_at, sc.adjustment_voucher_id, w.name, u.full_name, v.code
-        ORDER BY sc.created_at DESC, sc.id DESC
+        ORDER BY $orderBy
         LIMIT $limit OFFSET $offset
     ");
     $stmt->execute($params);

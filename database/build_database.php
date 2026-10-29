@@ -39,6 +39,9 @@ $warehouses = [
 // admin, quanly: mọi kho | mỗi nhân viên: chỉ kho mình phụ trách
 $userWarehouses = [[1, 1], [1, 2], [1, 3], [2, 1], [2, 2], [2, 3], [3, 1], [4, 2], [5, 3]];
 
+// Kho ảo "Hàng đang đi đường" của điều chuyển: không phân quyền cho ai -> không hiện trong danh mục kho
+const TRANSIT_ID = 4;
+
 // [tên, đơn vị tính, hạn dùng (tháng)]
 $items = [
     1  => ['Sữa tươi Vinamilk 1L',          'Hộp',   6],
@@ -98,43 +101,48 @@ $batches[$raceBatchId] = [3, 'L2610-TEST', '2026-10-01', '2028-10-01'];
 // BỘ GHI CHỨNG TỪ: vừa mô phỏng tồn kho, vừa sinh câu SQL
 // ---------------------------------------------------------------------
 
+/**
+ * Mô phỏng chứng từ theo đúng các bước của ứng dụng (đúng thứ tự trigger yêu cầu):
+ *   lập PENDING -> duyệt (xuất / điều chuyển: giữ hàng) -> từng ĐỢT GHI SỔ (nhận / xuất / gửi / hàng đến)
+ *   -> trạng thái cuối. Vừa tính tồn + hàng đang giữ, vừa sinh câu SQL.
+ */
 final class Ledger
 {
     public array $sql = [];
     public array $stock = [];          // "kho:lô" => số lượng
+    public array $reserved = [];       // "kho:lô" => đang giữ chỗ
     public int $movementCount = 0;
     public int $voucherCount = 0;
     private int $lineId = 0;
+    private int $postingId = 0;
     private array $codeSeq = [];
+    private array $vouchers = [];      // id => [type, kho, kho đến, mã, số đợt, [dòng: [line_id, batch_id, qty]]]
     private const PREFIX = ['IMPORT' => 'PN', 'EXPORT' => 'PX', 'TRANSFER' => 'PC', 'ADJUSTMENT' => 'DC'];
 
-    public function __construct(private array $batches) {}
+    public function __construct(private array $batches, private int $transitId) {}
 
     public function qty(int $wh, int $batchId): int
     {
         return $this->stock["$wh:$batchId"] ?? 0;
     }
 
-    /** Các lô còn hàng trong kho: [batch_id => số lượng] */
+    /** Các lô còn hàng CÓ THỂ XUẤT trong kho (tồn - đang giữ): [batch_id => số lượng] */
     public function available(int $wh, array $exclude = []): array
     {
         $result = [];
         foreach ($this->stock as $key => $qty) {
             [$w, $b] = array_map('intval', explode(':', $key));
-            if ($w === $wh && $qty > 0 && !in_array($b, $exclude, true)) {
-                $result[$b] = $qty;
+            $free = $qty - ($this->reserved[$key] ?? 0);
+            if ($w === $wh && $free > 0 && !in_array($b, $exclude, true)) {
+                $result[$b] = $free;
             }
         }
         return $result;
     }
 
-    /**
-     * Lập 1 chứng từ. $lines = [[batch_id, số lượng], ...]
-     * $approveAt = null -> để PENDING (dùng cho phép thử).
-     * Trả về [id, mã chứng từ].
-     */
-    public function voucher(string $type, int $wh, ?int $toWh, string $createdAt, int $createdBy,
-                            string $reason, array $lines, ?string $approveAt, ?int $refId = null): array
+    /** Lập chứng từ PENDING. $lines = [[batch_id, số lượng], ...]. Trả về [id, mã]. */
+    public function create(string $type, int $wh, ?int $toWh, string $createdAt, int $createdBy,
+                           string $reason, array $lines, ?int $refId = null): array
     {
         $id   = ++$this->voucherCount;
         $year = substr($createdAt, 0, 4);
@@ -147,43 +155,137 @@ final class Ledger
             $id, q($code), $type, $wh, $toWh ?? 'NULL', $refId ?? 'NULL',
             substr($createdAt, 0, 10), q($reason), $createdBy, $createdAt
         );
-
-        $lineRows = [];
-        $movementRows = [];
+        $rows = [];
+        $voucherLines = [];
         foreach ($lines as [$batchId, $qty]) {
             $lineId = ++$this->lineId;
-            $itemId = $this->batches[$batchId][0];
-            $lineRows[] = sprintf('(%d, %d, %d, %d, %d)', $lineId, $id, $itemId, $batchId, $qty);
+            $rows[] = sprintf('(%d, %d, %d, %d, %d)', $lineId, $id, $this->batches[$batchId][0], $batchId, $qty);
+            $voucherLines[] = [$lineId, $batchId, $qty];
+        }
+        $this->sql[] = "INSERT INTO voucher_lines (id, voucher_id, item_id, batch_id, quantity) VALUES\n" . implode(",\n", $rows) . ';';
+        $this->vouchers[$id] = [$type, $wh, $toWh, $code, 0, $voucherLines];
+        return [$id, $code];
+    }
 
-            if ($approveAt === null) {
+    /** Duyệt: phiếu xuất / điều chuyển giữ hàng ở kho (đi) */
+    public function approve(int $id, string $at): void
+    {
+        [$type, $wh, , $code, , $lines] = $this->vouchers[$id];
+        if (in_array($type, ['EXPORT', 'TRANSFER'], true)) {
+            foreach ($lines as [, $batchId, $qty]) {
+                $key = "$wh:$batchId";
+                if ($this->qty($wh, $batchId) - ($this->reserved[$key] ?? 0) < $qty) {
+                    throw new RuntimeException("Mô phỏng sai: $code giữ quá số có thể xuất (kho $wh, lô $batchId)");
+                }
+                $this->reserved[$key] = ($this->reserved[$key] ?? 0) + $qty;
+            }
+        }
+        $this->sql[] = sprintf("UPDATE vouchers SET status = 'APPROVED', approved_by = %d, approved_at = '%s' WHERE id = %d;", MANAGER_ID, $at, $id);
+    }
+
+    /**
+     * 1 đợt ghi sổ. $quantities = [vị trí dòng => số lượng] (null = đủ số trên phiếu), $damaged tương tự.
+     * Trả về [vị trí dòng => số đã ghi].
+     */
+    public function post(int $id, string $kind, string $at, int $by, ?array $quantities = null, array $damaged = [], ?string $note = null): array
+    {
+        [$type, $wh, $toWh, $code, $count, $lines] = $this->vouchers[$id];
+        $postingId = ++$this->postingId;
+        $this->vouchers[$id][4] = ++$count;
+        $this->sql[] = sprintf("INSERT INTO voucher_postings (id, voucher_id, code, kind, note, created_by, created_at) VALUES (%d, %d, %s, '%s', %s, %d, '%s');",
+            $postingId, $id, q("$code/$count"), $kind, q($note), $by, $at);
+
+        $postingRows = [];
+        $movementRows = [];
+        $done = [];
+        foreach ($lines as $n => [$lineId, $batchId, $lineQty]) {
+            $qty = $quantities === null ? $lineQty : ($quantities[$n] ?? 0);
+            $bad = $damaged[$n] ?? 0;
+            if ($qty === 0 && $bad === 0) {
                 continue;
             }
-            $changes = match ($type) {
-                'IMPORT'     => [[$wh, $qty]],
-                'EXPORT'     => [[$wh, -$qty]],
-                'TRANSFER'   => [[$wh, -$qty], [$toWh, $qty]],
-                'ADJUSTMENT' => [[$wh, $qty]],
+            $postingRows[] = sprintf('(%d, %d, %d, %d)', $postingId, $lineId, $qty, $bad);
+            $done[$n] = $qty;
+            $changes = match ($kind) {
+                'RECEIVE' => [[$wh, $qty, false]],
+                'SHIP'    => [[$wh, -$qty, true]],
+                'SEND'    => [[$wh, -$qty, true], [$this->transitId, $qty, false]],
+                'ARRIVE'  => [[$this->transitId, -$qty, false], [$toWh, $qty, false]],
+                'ADJUST'  => [[$wh, $qty, false]],
             };
-            foreach ($changes as [$w, $delta]) {
+            foreach ($changes as [$w, $delta, $fromReserved]) {
+                if ($delta === 0) {
+                    continue;
+                }
+                $key = "$w:$batchId";
                 $newQty = $this->qty($w, $batchId) + $delta;
                 if ($newQty < 0) {
                     throw new RuntimeException("Mô phỏng sai: $code làm tồn âm (kho $w, lô $batchId)");
                 }
-                $this->stock["$w:$batchId"] = $newQty;
-                $movementRows[] = sprintf("(%d, %d, %d, %d, %d, %d, '%s', %d)",
-                    $id, $lineId, $w, $itemId, $batchId, $delta, $approveAt, MANAGER_ID);
+                $this->stock[$key] = $newQty;
+                if ($fromReserved) {
+                    $this->reserved[$key] -= -$delta;
+                }
+                $movementRows[] = sprintf("(%d, %d, %d, %d, %d, %d, %d, '%s', %d)",
+                    $id, $postingId, $lineId, $w, $this->batches[$batchId][0], $batchId, $delta, $at, $by);
                 $this->movementCount++;
             }
         }
-
-        $this->sql[] = "INSERT INTO voucher_lines (id, voucher_id, item_id, batch_id, quantity) VALUES\n"
-            . implode(",\n", $lineRows) . ';';
-
-        if ($approveAt !== null) {
-            $this->sql[] = "INSERT INTO stock_movements (voucher_id, voucher_line_id, warehouse_id, item_id, batch_id, quantity, moved_at, created_by) VALUES\n"
+        $this->sql[] = "INSERT INTO voucher_posting_lines (posting_id, voucher_line_id, quantity, damaged_qty) VALUES\n" . implode(",\n", $postingRows) . ';';
+        if ($movementRows) {
+            $this->sql[] = "INSERT INTO stock_movements (voucher_id, posting_id, voucher_line_id, warehouse_id, item_id, batch_id, quantity, moved_at, created_by) VALUES\n"
                 . implode(",\n", $movementRows) . ';';
-            $this->sql[] = sprintf("UPDATE vouchers SET status = 'APPROVED', approved_by = %d, approved_at = '%s' WHERE id = %d;",
-                MANAGER_ID, $approveAt, $id);
+        }
+        // Tiến độ từng dòng
+        $column = ['RECEIVE' => 'received_qty', 'SHIP' => 'shipped_qty', 'SEND' => 'shipped_qty', 'ARRIVE' => 'received_qty'][$kind] ?? null;
+        foreach ($column ? $done : [] as $n => $qty) {
+            $this->sql[] = sprintf('UPDATE voucher_lines SET %s = %s + %d%s WHERE id = %d;',
+                $column, $column, $qty, ($damaged[$n] ?? 0) ? ', damaged_qty = damaged_qty + ' . $damaged[$n] : '', $lines[$n][0]);
+        }
+        return $done;
+    }
+
+    public function status(int $id, string $status, array $set = []): void
+    {
+        $assign = array_map(fn ($col, $value) => "$col = " . q($value), array_keys($set), $set);
+        $this->sql[] = sprintf("UPDATE vouchers SET status = '%s'%s WHERE id = %d;", $status, $assign ? ', ' . implode(', ', $assign) : '', $id);
+    }
+
+    /**
+     * Lập + thực hiện trọn vẹn 1 chứng từ (dữ liệu lịch sử). $approveAt = null -> để PENDING (dùng cho phép thử).
+     * Điều chuyển: gửi lúc duyệt, kho đến nhận sau 90 phút. Trả về [id, mã chứng từ].
+     */
+    public function voucher(string $type, int $wh, ?int $toWh, string $createdAt, int $createdBy,
+                            string $reason, array $lines, ?string $approveAt, ?int $refId = null, int $receiver = 0): array
+    {
+        [$id, $code] = $this->create($type, $wh, $toWh, $createdAt, $createdBy, $reason, $lines, $refId);
+        if ($approveAt === null) {
+            $this->sql[] = '';
+            return [$id, $code];
+        }
+        switch ($type) {
+            case 'ADJUSTMENT':
+                $this->post($id, 'ADJUST', $approveAt, MANAGER_ID);
+                $this->approve($id, $approveAt);
+                break;
+            case 'IMPORT':
+                $this->approve($id, $approveAt);
+                $this->post($id, 'RECEIVE', $approveAt, $createdBy);
+                $this->status($id, 'COMPLETED', ['completed_at' => $approveAt]);
+                break;
+            case 'EXPORT':
+                $this->approve($id, $approveAt);
+                $this->post($id, 'SHIP', $approveAt, $createdBy);
+                $this->status($id, 'COMPLETED', ['shipped_at' => $approveAt, 'completed_at' => $approveAt]);
+                break;
+            case 'TRANSFER':
+                $arriveAt = date('Y-m-d H:i:s', strtotime($approveAt) + 5400);
+                $this->approve($id, $approveAt);
+                $this->post($id, 'SEND', $approveAt, $createdBy);
+                $this->status($id, 'IN_TRANSIT', ['shipped_at' => $approveAt]);
+                $this->post($id, 'ARRIVE', $arriveAt, $receiver ?: $createdBy);
+                $this->status($id, 'COMPLETED', ['completed_at' => $arriveAt]);
+                break;
         }
         $this->sql[] = '';
         return [$id, $code];
@@ -207,7 +309,7 @@ function pick(array $values, int $n): array
     return array_slice($values, 0, min($n, count($values)));
 }
 
-$ledger = new Ledger($batches);
+$ledger = new Ledger($batches, TRANSIT_ID);
 $suppliers = ['Vinamilk', 'Acecook', 'Masan', 'Unilever', 'Kinh Đô', 'Sabeco', 'Coca-Cola VN', 'Tân Hiệp Phát'];
 $customers = ['Đại lý Minh Anh', 'Siêu thị Hòa Bình', 'Tạp hóa Cô Ba', 'Cửa hàng Thành Công', 'Đại lý Phú Quý', 'Mini mart 24h'];
 
@@ -257,7 +359,7 @@ for ($day = strtotime('2026-08-05'); $day <= strtotime('2026-10-05'); $day += 86
             $lines[] = [$b, mt_rand(1, max(1, intdiv($available[$b], 3)))];
         }
         $ledger->voucher('TRANSFER', $wh, $toWh, randomTime($date, 8, 11), $staff,
-            "Điều chuyển bổ sung hàng cho {$warehouses[$toWh][1]}", $lines, randomTime($date, 13, 16));
+            "Điều chuyển bổ sung hàng cho {$warehouses[$toWh][1]}", $lines, randomTime($date, 13, 16), null, $warehouses[$toWh][3]);
     }
 }
 
@@ -321,6 +423,56 @@ $transferBatch = array_key_first($hnStock);
     'Phép thử 2 - điều chuyển HN sang HCM', [[$transferBatch, 10]], null);
 
 // ---------------------------------------------------------------------
+// 5b. DỮ LIỆU MINH HỌA CÁC BƯỚC MỚI (chỉ dùng Kho ĐN / HCM, không đụng dữ liệu phép thử ở Kho HN)
+// ---------------------------------------------------------------------
+// Lô mới nhất của mặt hàng (id lô tăng theo ngày sản xuất)
+$newestBatch = fn (int $itemId) => max(array_filter($batchIds, fn ($b) => $batches[$b][0] === $itemId));
+$pickAvailable = function (int $wh, int $min) use ($ledger, $raceBatchId): array {
+    $available = array_filter($ledger->available($wh, [$raceBatchId]), fn ($q) => $q >= $min);
+    ksort($available);
+    return array_keys($available);
+};
+
+// (b) Phiếu nhập giao 2 đợt: đợt 1 về 60 hộp sữa (2 hộp móp) + đủ 48 lốc sữa chua -> còn chờ 40 hộp
+[$partialId, $partialCode] = $ledger->create('IMPORT', 3, null, '2026-10-22 08:30:00', 5,
+    'Nhập hàng từ NCC Vinamilk (giao nhiều đợt)', [[$newestBatch(1), 100], [$newestBatch(24), 48]]);
+$ledger->approve($partialId, '2026-10-22 09:00:00');
+$ledger->post($partialId, 'RECEIVE', '2026-10-24 10:15:00', 5, [0 => 60, 1 => 48], [0 => 2], '2 hộp sữa móp méo, trả lại NCC');
+$ledger->status($partialId, 'PARTIAL');
+$ledger->sql[] = '';
+
+// (b) Phiếu nhập đã duyệt, hàng chưa về
+[$waitingId] = $ledger->create('IMPORT', 2, null, '2026-10-25 08:00:00', 4,
+    'Nhập hàng từ NCC Masan (chờ hàng về)', [[$newestBatch(26), 60], [$newestBatch(27), 80]]);
+$ledger->approve($waitingId, '2026-10-25 09:30:00');
+$ledger->sql[] = '';
+
+// (c) Phiếu xuất đã duyệt, đang giữ hàng chờ xe (lô 0, 1); lô 2 dùng cho điều chuyển bên dưới
+$dnLots = $pickAvailable(3, 40);
+[$reservedId] = $ledger->create('EXPORT', 3, null, '2026-10-26 08:00:00', 5,
+    'Xuất bán cho Siêu thị Hòa Bình (chờ xe lấy hàng)', [[$dnLots[0], 20], [$dnLots[1], 15]]);
+$ledger->approve($reservedId, '2026-10-26 09:00:00');
+$ledger->sql[] = '';
+
+// (a) Yêu cầu điều chuyển HCM -> ĐN đã được đồng ý: phiếu điều chuyển đã gửi, đang đi đường quá hạn
+[$transitId, $transitCode] = $ledger->create('TRANSFER', 3, 2, '2026-10-21 09:00:00', MANAGER_ID,
+    'Theo yêu cầu YC-2026-0001: Đại lý Phú Quý (HCM) đặt hàng, cần trước 25/10', [[$dnLots[2], 12]]);
+$ledger->approve($transitId, '2026-10-21 09:00:00');
+$ledger->post($transitId, 'SEND', '2026-10-21 14:00:00', 5);
+$ledger->status($transitId, 'IN_TRANSIT', ['shipped_at' => '2026-10-21 14:00:00']);
+$ledger->sql[] = '';
+
+$ledger->sql[] = "INSERT INTO transfer_requests (id, code, from_warehouse_id, to_warehouse_id, needed_by, reason, created_by, created_at) VALUES\n"
+    . "(1, 'YC-2026-0001', 3, 2, '2026-10-25', 'Đại lý Phú Quý (HCM) đặt hàng, cần trước 25/10', 4, '2026-10-20 16:00:00'),\n"
+    . "(2, 'YC-2026-0002', 1, 2, '2026-11-02', 'Cửa hàng Thành Công đặt hàng, giao trước 02/11', 4, '2026-10-27 15:30:00');";
+$hnLots = $pickAvailable(1, 40);
+$ledger->sql[] = sprintf("INSERT INTO transfer_request_lines (request_id, item_id, quantity) VALUES\n(1, %d, 12),\n(2, %d, 20),\n(2, %d, 15);",
+    $batches[$dnLots[2]][0], $batches[$hnLots[0]][0], $batches[$hnLots[1]][0]);
+$ledger->sql[] = "UPDATE transfer_requests SET status = 'ACCEPTED', transfer_voucher_id = $transitId, decided_by = " . MANAGER_ID
+    . ", decided_at = '2026-10-21 09:00:00', decision_note = 'Đồng ý, gửi chuyến chiều 21/10' WHERE id = 1;";
+$ledger->sql[] = '';
+
+// ---------------------------------------------------------------------
 // 6. GHI FILE
 // ---------------------------------------------------------------------
 $out = [];
@@ -350,6 +502,8 @@ foreach ($warehouses as $id => [$code, $name, $address]) {
     $rows[] = sprintf('(%d, %s, %s, %s)', $id, q($code), q($name), q($address));
 }
 $out[] = "INSERT INTO warehouses (id, code, name, address) VALUES\n" . implode(",\n", $rows) . ";\n";
+$out[] = "-- Kho ảo cho hàng đang trên đường điều chuyển (không ai được phân quyền trực tiếp)";
+$out[] = "INSERT INTO warehouses (id, code, name, address, is_transit) VALUES\n(" . TRANSIT_ID . ", 'TRANSIT', 'Hàng đang đi đường', NULL, 1);\n";
 
 $rows = array_map(fn ($p) => "($p[0], $p[1])", $userWarehouses);
 $out[] = "INSERT INTO user_warehouses (user_id, warehouse_id) VALUES\n" . implode(",\n", $rows) . ";\n";
@@ -366,20 +520,21 @@ foreach ($batches as $id => [$itemId, $batchNo, $mfg, $expiry]) {
 }
 $out[] = "INSERT INTO batches (id, item_id, batch_no, mfg_date, expiry_date) VALUES\n" . implode(",\n", $rows) . ";\n";
 
-$out[] = "-- Chứng từ: lập PENDING -> ghi sổ phát sinh -> APPROVED (đúng thứ tự trigger yêu cầu)";
+$out[] = "-- Chứng từ: lập PENDING -> duyệt -> từng đợt ghi sổ -> trạng thái cuối (đúng thứ tự trigger yêu cầu)";
 $out[] = implode("\n", $ledger->sql);
 
-// Tồn hiện tại = tổng phát sinh (tính từ chính mô phỏng)
+// Tồn hiện tại = tổng phát sinh; đang giữ = phiếu xuất / điều chuyển đã duyệt chưa rời kho (tính từ chính mô phỏng)
 $rows = [];
 ksort($ledger->stock, SORT_NATURAL);
 foreach ($ledger->stock as $key => $qty) {
     [$wh, $b] = array_map('intval', explode(':', $key));
-    $rows[] = sprintf('(%d, %d, %d, %d)', $wh, $batches[$b][0], $b, $qty);
+    $rows[] = sprintf('(%d, %d, %d, %d, %d)', $wh, $batches[$b][0], $b, $qty, $ledger->reserved[$key] ?? 0);
 }
-$out[] = "-- Tồn hiện tại = SUM(stock_movements) theo kho/lô";
-$out[] = "INSERT INTO stocks (warehouse_id, item_id, batch_id, quantity) VALUES\n" . implode(",\n", $rows) . ";\n";
+$out[] = "-- Tồn hiện tại = SUM(stock_movements) theo kho/lô; reserved = hàng đang giữ chỗ";
+$out[] = "INSERT INTO stocks (warehouse_id, item_id, batch_id, quantity, reserved) VALUES\n" . implode(",\n", $rows) . ";\n";
 
 $out[] = "-- Phiếu chờ duyệt cho phép thử: $race1, $race2 (phép thử 1), $transferCode (phép thử 2)";
+$out[] = "-- Minh họa: $partialCode nhận một phần, $transitCode đang đi đường (quá hạn), YC-2026-0002 chờ kho HN xử lý";
 
 file_put_contents(__DIR__ . '/quanlykhohang.sql', implode("\n", $out) . "\n");
 
