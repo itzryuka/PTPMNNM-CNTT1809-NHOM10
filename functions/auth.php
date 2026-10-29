@@ -8,6 +8,20 @@ function startSession(): void
     }
 }
 
+const LOCKED_ACCOUNT_MESSAGE = 'Tài khoản của bạn đang bị khóa. Vui lòng liên hệ quản trị hệ thống để được mở lại.';
+
+/**
+ * Tài khoản đúng mật khẩu nhưng đang bị khóa -> báo rõ "đang bị khóa" thay cho "sai mật khẩu".
+ * Chỉ báo khi mật khẩu đúng, để người đoán mò không dò được tài khoản nào tồn tại.
+ */
+function isLockedAccount(PDO $pdo, string $username, string $password): bool
+{
+    $stmt = $pdo->prepare('SELECT password_hash FROM users WHERE username = ? AND is_active = 0');
+    $stmt->execute([$username]);
+    $hash = $stmt->fetchColumn();
+    return $hash !== false && password_verify($password, $hash);
+}
+
 /** Kiểm tra tài khoản + mật khẩu; đúng thì lưu user_id vào session */
 function attemptLogin(PDO $pdo, string $username, string $password): bool
 {
@@ -20,6 +34,7 @@ function attemptLogin(PDO $pdo, string $username, string $password): bool
     startSession();
     session_regenerate_id(true);               // chống chiếm phiên (session fixation)
     $_SESSION['user_id'] = (int) $row['id'];
+    $pdo->prepare('UPDATE users SET last_login_at = NOW() WHERE id = ?')->execute([$row['id']]);
     return true;
 }
 
@@ -36,7 +51,7 @@ function logoutUser(): void
  */
 function loadUser(PDO $pdo, int $userId): ?array
 {
-    $stmt = $pdo->prepare('SELECT id, username, full_name, role FROM users WHERE id = ? AND is_active = 1');
+    $stmt = $pdo->prepare('SELECT id, username, full_name, role, must_change_password FROM users WHERE id = ? AND is_active = 1');
     $stmt->execute([$userId]);
     $user = $stmt->fetch();
     if (!$user) {
@@ -52,10 +67,12 @@ function loadUser(PDO $pdo, int $userId): ?array
 
 /**
  * Bắt buộc đăng nhập, trả về user hiện tại.
- * Quyền kho được đọc lại từ CSDL ở MỖI request, nên khi quản trị thu hồi quyền
- * thì có hiệu lực ngay (không phải chờ user đăng nhập lại).
+ * Vai trò, quyền kho và trạng thái khóa được đọc lại từ CSDL ở MỖI request, nên khi quản trị
+ * đổi quyền / khóa tài khoản thì có hiệu lực ngay (không phải chờ user đăng nhập lại).
+ * Tài khoản còn mật khẩu tạm (quản trị vừa cấp / đặt lại) chỉ vào được trang đổi mật khẩu:
+ * trang đó và nơi xử lý của nó gọi với $passwordPage = true.
  */
-function requireLogin(string $basePath): array
+function requireLogin(string $basePath, bool $passwordPage = false): array
 {
     startSession();
     try {
@@ -65,10 +82,25 @@ function requireLogin(string $basePath): array
         exit('Không kết nối được CSDL: ' . e($e->getMessage()));
     }
     if ($user === null) {
+        if (!empty($_SESSION['user_id'])) {          // phiên còn nhưng tài khoản vừa bị khóa -> bỏ phiên cũ, báo lý do
+            logoutUser();
+            startSession();
+            setFlash('error', LOCKED_ACCOUNT_MESSAGE);
+        }
         header('Location: ' . $basePath . 'views/login.php');
         exit;
     }
+    if ($user['must_change_password'] && !$passwordPage) {
+        header('Location: ' . $basePath . 'views/change_password.php');
+        exit;
+    }
     return $user;
+}
+
+/** Quản trị hệ thống: cấp tài khoản, phân quyền, tạo / xóa kho */
+function isAdmin(array $user): bool
+{
+    return $user['role'] === 'ADMIN';
 }
 
 /** Quyền theo kho: kho phải nằm trong danh sách user_warehouses của user */
@@ -85,7 +117,7 @@ function isManager(array $user): bool
 
 function roleLabel(string $role): string
 {
-    return ['ADMIN' => 'Quản trị', 'MANAGER' => 'Quản lý kho', 'STAFF' => 'Nhân viên kho'][$role] ?? $role;
+    return ['ADMIN' => 'Quản trị hệ thống', 'MANAGER' => 'Quản lý kho', 'STAFF' => 'Nhân viên kho'][$role] ?? $role;
 }
 
 // "Nguyễn Văn Quản Lý" -> "NL"

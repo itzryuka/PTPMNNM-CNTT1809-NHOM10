@@ -27,7 +27,7 @@ try {
     $dbError = 'Không thể tải dữ liệu: ' . $e->getMessage();
 }
 $itemCount = count(array_unique(array_column($stock, 'item_id')));
-$canManage = isManager($user);
+$canManage = isManager($user);   // sửa thông tin kho được giao; xóa / mở lại kho chỉ quản trị
 
 $pageTitle  = $warehouse ? $warehouse['name'] : 'Kho';
 $basePath   = '../';
@@ -40,7 +40,7 @@ require __DIR__ . '/layout/header.php';
                     <div class="alert-warning">
                         <i class="fas fa-snowflake"></i> Kho đang kiểm kê (đợt
                         <a class="link-strong" href="stock_count_detail.php?id=<?= (int) $activity['open_count']['id'] ?>"><?= e($activity['open_count']['code']) ?></a>):
-                        phiếu nhập / xuất / điều chuyển tạm thời không duyệt được.
+                        tạm thời không nhận / xuất / gửi / giữ hàng của kho được.
                     </div>
                 <?php endif; ?>
 
@@ -93,6 +93,7 @@ require __DIR__ . '/layout/header.php';
                 <div class="form-actions">
                     <a class="btn btn-light" href="warehouse_list.php"><i class="fas fa-arrow-left"></i> Danh sách kho</a>
                     <?php if ($canManage): ?>
+                        <?php if (isAdmin($user)): ?>
                         <form method="post" action="../handle/warehouse_process.php">
                             <input type="hidden" name="csrf_token" value="<?= e(csrfToken()) ?>">
                             <input type="hidden" name="id" value="<?= (int) $warehouse['id'] ?>">
@@ -104,6 +105,7 @@ require __DIR__ . '/layout/header.php';
                                 <button class="btn btn-import" type="submit" name="action" value="restore"><i class="fas fa-undo"></i> Hoạt động lại</button>
                             <?php endif; ?>
                         </form>
+                        <?php endif; ?>
                         <?php $fill = ['action' => 'update', 'id' => (int) $warehouse['id'], 'code' => $warehouse['code'], 'name' => $warehouse['name'], 'address' => $warehouse['address'] ?? '']; ?>
                         <button class="btn btn-primary" type="button" data-modal-open="warehouseModal" data-modal-title="Sửa <?= e($warehouse['name']) ?>"
                                 data-fill="<?= e(json_encode($fill, JSON_UNESCAPED_UNICODE)) ?>"><i class="fas fa-edit"></i> Sửa</button>

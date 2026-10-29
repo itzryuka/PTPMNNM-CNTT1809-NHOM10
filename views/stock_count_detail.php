@@ -35,7 +35,7 @@ try {
 }
 
 $isOpen      = ($count['status'] ?? '') === 'COUNTING';
-$canDecide   = $count !== null && $isOpen && isManager($user);
+$canDecide   = $count !== null && $isOpen && isManager($user) && canAccessWarehouse($user, (int) $count['warehouse_id']);   // chỉ quản lý của kho này
 $countedRows = count(array_filter($lines, fn ($l) => $l['counted_qty'] !== null));
 $diffRows    = count(array_filter($lines, fn ($l) => $l['counted_qty'] !== null && toMilli($l['difference']) !== 0));
 
@@ -50,7 +50,7 @@ require __DIR__ . '/layout/header.php';
                 <?php if ($isOpen): ?>
                     <div class="alert-warning">
                         <i class="fas fa-snowflake"></i>
-                        <?= e($count['warehouse_name']) ?> đang kiểm kê: mọi phiếu nhập / xuất / điều chuyển của kho tạm thời không duyệt được cho tới khi chốt đợt này.
+                        <?= e($count['warehouse_name']) ?> đang kiểm kê: tạm thời không nhận / xuất / gửi / giữ hàng của kho được cho tới khi chốt đợt này.
                     </div>
                 <?php endif; ?>
 
@@ -165,7 +165,8 @@ require __DIR__ . '/layout/header.php';
                             Yêu cầu: đã đếm hết các dòng và dòng lệch nào cũng có lý do.
                         </p>
                         <div class="decision-row">
-                            <form method="post" action="../handle/stock_count_process.php" class="approve-form js-decision"
+                            <form method="post" action="../handle/stock_count_process.php" class="approve-form js-decision" data-lock=".decision-row"
+                                  data-confirm-title="Duyệt đợt kiểm kê" data-confirm-ok="Duyệt" data-confirm-variant="import"
                                   data-confirm="Duyệt đợt <?= e($count['code']) ?>? Phiếu điều chỉnh sẽ được ghi sổ và không sửa / xóa được.">
                                 <input type="hidden" name="csrf_token" value="<?= e(csrfToken()) ?>">
                                 <input type="hidden" name="action" value="approve">
@@ -174,7 +175,8 @@ require __DIR__ . '/layout/header.php';
                                        value="Điều chỉnh tồn theo số đếm thực tế" placeholder="Lý do điều chỉnh (bắt buộc)">
                                 <button class="btn btn-import" type="submit"><i class="fas fa-check"></i> Duyệt &amp; sinh phiếu điều chỉnh</button>
                             </form>
-                            <form method="post" action="../handle/stock_count_process.php" class="js-decision"
+                            <form method="post" action="../handle/stock_count_process.php" class="js-decision" data-lock=".decision-row"
+                                  data-confirm-title="Hủy đợt kiểm kê" data-confirm-ok="Hủy đợt"
                                   data-confirm="Hủy đợt <?= e($count['code']) ?>? Số đếm bị bỏ, không ghi phát sinh nào.">
                                 <input type="hidden" name="csrf_token" value="<?= e(csrfToken()) ?>">
                                 <input type="hidden" name="action" value="cancel">

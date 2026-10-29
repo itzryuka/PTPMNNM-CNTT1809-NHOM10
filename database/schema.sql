@@ -9,13 +9,22 @@
 --   1. stock_movements chỉ được INSERT (trigger chặn UPDATE / DELETE).
 --   2. stocks.quantity = SUM(stock_movements.quantity) theo kho/lô
 --      (kiểm tra bằng view v_stock_reconciliation).
---   3. stocks.quantity >= 0 (CHECK) — lưới an toàn cuối cùng chống xuất âm.
---   4. Chứng từ đã APPROVED / REJECTED thì không sửa, không xóa được.
+--   3. stocks.quantity >= 0 và 0 <= stocks.reserved <= stocks.quantity (CHECK)
+--      — lưới an toàn cuối cùng chống xuất âm và chống "hứa" quá số hàng có.
+--   4. Chứng từ đi theo máy trạng thái (trigger kiểm tra từng bước chuyển):
+--        IMPORT    : PENDING -> APPROVED (đồng ý nhập) -> PARTIAL -> COMPLETED | CLOSED (đóng, thiếu hàng)
+--        EXPORT    : PENDING -> APPROVED (giữ hàng) -> COMPLETED (đã xuất) | CANCELLED (hủy giữ chỗ)
+--        TRANSFER  : PENDING -> APPROVED (giữ hàng ở kho đi) -> IN_TRANSIT (đã gửi)
+--                    -> COMPLETED | DISCREPANCY (nhận thiếu) -> IN_TRANSIT | COMPLETED
+--        ADJUSTMENT: PENDING -> APPROVED (ghi sổ ngay)
+--      Đã kết thúc (COMPLETED / CLOSED / CANCELLED / REJECTED) thì không sửa, không xóa.
 --      Muốn sửa sai -> lập chứng từ ADJUSTMENT có lý do, tham chiếu chứng từ gốc.
---   5. Mỗi dòng chứng từ chỉ ghi sổ 1 lần cho mỗi kho
---      (UNIQUE voucher_line_id + warehouse_id) — chống ghi đúp ở mức CSDL.
---   6. Điều chuyển = 1 chứng từ TRANSFER sinh 2 dòng phát sinh trong cùng
---      giao dịch: (-) tại kho đi và (+) tại kho đến, cùng trỏ về chứng từ đó.
+--   5. Mỗi lần hàng thật sự di chuyển là 1 ĐỢT GHI SỔ (voucher_postings): nhận hàng, xuất kho,
+--      gửi hàng, hàng đến, điều chỉnh. Phát sinh trỏ về đợt đó; mỗi dòng chứng từ chỉ ghi 1 lần
+--      cho mỗi kho trong 1 đợt (UNIQUE posting + dòng + kho) — chống ghi đúp ở mức CSDL.
+--   6. Điều chuyển đi qua kho ảo "Hàng đang đi đường" (warehouses.is_transit = 1). Mỗi bước vẫn
+--      ghi đủ 2 đầu trong cùng 1 giao dịch: gửi = (-) kho đi, (+) đang đi đường;
+--      nhận = (-) đang đi đường, (+) kho đến. Hàng thất lạc: phiếu ADJUSTMENT (-) đang đi đường, có lý do.
 --
 --  CẢNH BÁO: dòng DROP DATABASE bên dưới xóa toàn bộ dữ liệu cũ của
 --  quanlykhohang. Bỏ dòng đó nếu bạn đã có dữ liệu thật.
@@ -39,7 +48,10 @@ CREATE TABLE users (
   email          VARCHAR(100) NULL,
   -- ADMIN: toàn quyền | MANAGER: duyệt chứng từ, duyệt kiểm kê | STAFF: lập phiếu, nhập số đếm
   role           ENUM('ADMIN','MANAGER','STAFF') NOT NULL DEFAULT 'STAFF',
-  is_active      TINYINT(1)   NOT NULL DEFAULT 1,
+  is_active      TINYINT(1)   NOT NULL DEFAULT 1,     -- 0 = đã khóa (nghỉ việc): không đăng nhập được, lịch sử chứng từ giữ nguyên
+  -- Tài khoản do quản trị cấp kèm mật khẩu tạm -> lần đăng nhập đầu bắt buộc đổi mật khẩu
+  must_change_password TINYINT(1) NOT NULL DEFAULT 0,
+  last_login_at  DATETIME     NULL,
   created_at     DATETIME     NOT NULL DEFAULT CURRENT_TIMESTAMP,
   updated_at     DATETIME     NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
   UNIQUE KEY uq_users_username (username),
@@ -56,8 +68,14 @@ CREATE TABLE warehouses (
   name        VARCHAR(100) NOT NULL,
   address     VARCHAR(255) NULL,
   is_active   TINYINT(1)   NOT NULL DEFAULT 1,
+  -- 1 = kho ảo "Hàng đang đi đường" của điều chuyển. Không phân quyền cho ai -> không hiện trong danh mục kho
+  is_transit  TINYINT(1)   NOT NULL DEFAULT 0,
   created_at  DATETIME     NOT NULL DEFAULT CURRENT_TIMESTAMP,
-  UNIQUE KEY uq_warehouses_code (code)
+  -- Khóa chống trùng tên: chữ thường, so sánh nhị phân -> không phân biệt hoa/thường nhưng PHÂN BIỆT dấu
+  -- (collation *_ci của MySQL coi "Cá" = "Cà"). Khoảng trắng thừa đã được ứng dụng gộp trước khi lưu.
+  name_key    VARCHAR(100) CHARACTER SET utf8mb4 COLLATE utf8mb4_bin AS (LOWER(name)) PERSISTENT,
+  UNIQUE KEY uq_warehouses_code (code),
+  UNIQUE KEY uq_warehouses_name (name_key)
 ) ENGINE=InnoDB;
 
 -- Bảng n-n: user được thao tác trên những kho nào (kiểm tra ở server)
@@ -79,7 +97,10 @@ CREATE TABLE items (
   description VARCHAR(255) NULL,
   is_active   TINYINT(1)   NOT NULL DEFAULT 1,
   created_at  DATETIME     NOT NULL DEFAULT CURRENT_TIMESTAMP,
-  UNIQUE KEY uq_items_sku (sku)
+  -- Chống tạo cùng một mặt hàng 2 lần dưới 2 mã khác nhau (xem name_key của warehouses)
+  name_key    VARCHAR(150) CHARACTER SET utf8mb4 COLLATE utf8mb4_bin AS (LOWER(name)) PERSISTENT,
+  UNIQUE KEY uq_items_sku (sku),
+  UNIQUE KEY uq_items_name (name_key)
 ) ENGINE=InnoDB;
 
 CREATE TABLE batches (
@@ -109,8 +130,12 @@ CREATE TABLE vouchers (
   to_warehouse_id       INT UNSIGNED NULL,          -- kho ĐẾN, chỉ dùng cho TRANSFER
   reference_voucher_id  INT UNSIGNED NULL,          -- chứng từ gốc bị điều chỉnh/hủy (chỉ ADJUSTMENT)
   voucher_date          DATE         NOT NULL,      -- ngày lập
-  status                ENUM('PENDING','APPROVED','REJECTED') NOT NULL DEFAULT 'PENDING',
+  status                ENUM('PENDING','APPROVED','PARTIAL','IN_TRANSIT','DISCREPANCY',
+                             'COMPLETED','CLOSED','CANCELLED','REJECTED') NOT NULL DEFAULT 'PENDING',
   reason                VARCHAR(255) NULL,          -- ghi chú / lý do (BẮT BUỘC với ADJUSTMENT)
+  closed_reason         VARCHAR(255) NULL,          -- lý do đóng phiếu thiếu hàng / hủy giữ chỗ
+  shipped_at            DATETIME     NULL,          -- lúc hàng rời kho (xuất kho / gửi điều chuyển)
+  completed_at          DATETIME     NULL,          -- lúc phiếu kết thúc (nhận đủ / đã xuất / đóng / hủy)
   -- Mã ngẫu nhiên sinh khi mở form lập phiếu: bấm "Lưu" 2 lần / F5 gửi lại form
   -- sẽ vi phạm UNIQUE -> không tạo trùng chứng từ
   client_token          CHAR(32)     NULL,
@@ -150,19 +175,68 @@ CREATE TABLE vouchers (
 -- Quy ước dấu của quantity:
 --   IMPORT / EXPORT / TRANSFER : luôn DƯƠNG (chiều nhập/xuất do loại chứng từ quyết định)
 --   ADJUSTMENT                 : CÓ DẤU (+ tăng tồn, - giảm tồn), khác 0
+-- Tiến độ thực hiện (chỉ thay đổi được khi phiếu đang chạy, xem trigger):
+--   IMPORT  : received_qty (nhận tốt, đã cộng tồn), damaged_qty (hỏng, trả NCC, không vào tồn)
+--   EXPORT  : shipped_qty (đã xuất)
+--   TRANSFER: shipped_qty (đã gửi), received_qty (kho đến đã nhận), lost_qty (ghi hao hụt trên đường)
+--             đang đi đường = shipped_qty - received_qty - lost_qty
 CREATE TABLE voucher_lines (
-  id          INT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
-  voucher_id  INT UNSIGNED  NOT NULL,
-  item_id     INT UNSIGNED  NOT NULL,
-  batch_id    INT UNSIGNED  NOT NULL,
-  quantity    DECIMAL(15,3) NOT NULL,               -- số lượng yêu cầu
-  note        VARCHAR(255)  NULL,
+  id            INT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
+  voucher_id    INT UNSIGNED  NOT NULL,
+  item_id       INT UNSIGNED  NOT NULL,
+  batch_id      INT UNSIGNED  NOT NULL,
+  quantity      DECIMAL(15,3) NOT NULL,             -- số lượng theo phiếu (đặt / yêu cầu)
+  received_qty  DECIMAL(15,3) NOT NULL DEFAULT 0,
+  damaged_qty   DECIMAL(15,3) NOT NULL DEFAULT 0,
+  shipped_qty   DECIMAL(15,3) NOT NULL DEFAULT 0,
+  lost_qty      DECIMAL(15,3) NOT NULL DEFAULT 0,
+  note          VARCHAR(255)  NULL,
   UNIQUE KEY uq_vl_voucher_batch (voucher_id, item_id, batch_id),
   KEY idx_vl_item (item_id),
   CONSTRAINT fk_vl_voucher FOREIGN KEY (voucher_id)        REFERENCES vouchers(id) ON DELETE CASCADE,
   CONSTRAINT fk_vl_item    FOREIGN KEY (item_id)           REFERENCES items(id),
   CONSTRAINT fk_vl_batch   FOREIGN KEY (batch_id, item_id) REFERENCES batches(id, item_id),
-  CONSTRAINT ck_vl_qty CHECK (quantity <> 0)
+  CONSTRAINT ck_vl_qty CHECK (quantity <> 0),
+  -- Không nhận / gửi quá số trên phiếu, không có số âm
+  CONSTRAINT ck_vl_progress CHECK (
+        received_qty >= 0 AND damaged_qty >= 0 AND shipped_qty >= 0 AND lost_qty >= 0
+    AND shipped_qty <= ABS(quantity)
+    AND received_qty + lost_qty <= ABS(quantity)
+  )
+) ENGINE=InnoDB;
+
+-- Đợt ghi sổ: mỗi lần hàng thật sự di chuyển (1 lần xe về, 1 lần xuất, 1 lần gửi, 1 lần nhận...)
+--   RECEIVE: nhận hàng của phiếu nhập   SHIP: xuất kho phiếu xuất
+--   SEND   : gửi hàng điều chuyển       ARRIVE: kho đến nhận hàng điều chuyển
+--   ADJUST : ghi sổ phiếu điều chỉnh
+CREATE TABLE voucher_postings (
+  id            INT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
+  voucher_id    INT UNSIGNED NOT NULL,
+  code          VARCHAR(40)  NOT NULL,              -- <mã phiếu>/<số thứ tự>, vd PN-2026-0021/2
+  kind          ENUM('RECEIVE','SHIP','SEND','ARRIVE','ADJUST') NOT NULL,
+  note          VARCHAR(255) NULL,                  -- vd lý do hàng hỏng khi nhận
+  -- Mã sinh khi mở form: bấm "Ghi nhận" 2 lần / F5 -> vi phạm UNIQUE -> không ghi đúp 1 đợt
+  client_token  CHAR(32)     NULL,
+  created_by    INT UNSIGNED NOT NULL,
+  created_at    DATETIME     NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  UNIQUE KEY uq_vp_code (code),
+  UNIQUE KEY uq_vp_token (client_token),
+  KEY idx_vp_voucher (voucher_id),
+  CONSTRAINT fk_vp_voucher FOREIGN KEY (voucher_id) REFERENCES vouchers(id),
+  CONSTRAINT fk_vp_user    FOREIGN KEY (created_by) REFERENCES users(id)
+) ENGINE=InnoDB;
+
+-- Số lượng của từng dòng trong 1 đợt (quantity: số đi / đến thật; damaged_qty: hỏng khi nhận hàng nhập)
+CREATE TABLE voucher_posting_lines (
+  id               INT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
+  posting_id       INT UNSIGNED  NOT NULL,
+  voucher_line_id  INT UNSIGNED  NOT NULL,
+  quantity         DECIMAL(15,3) NOT NULL DEFAULT 0,
+  damaged_qty      DECIMAL(15,3) NOT NULL DEFAULT 0,
+  UNIQUE KEY uq_vpl (posting_id, voucher_line_id),
+  CONSTRAINT fk_vpl_posting FOREIGN KEY (posting_id)      REFERENCES voucher_postings(id),
+  CONSTRAINT fk_vpl_line    FOREIGN KEY (voucher_line_id) REFERENCES voucher_lines(id),
+  CONSTRAINT ck_vpl_qty CHECK (damaged_qty >= 0 AND (quantity <> 0 OR damaged_qty > 0))
 ) ENGINE=InnoDB;
 
 -- =====================================================================
@@ -172,6 +246,7 @@ CREATE TABLE voucher_lines (
 CREATE TABLE stock_movements (
   id               BIGINT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
   voucher_id       INT UNSIGNED  NOT NULL,
+  posting_id       INT UNSIGNED  NOT NULL,          -- đợt ghi sổ sinh ra phát sinh này
   voucher_line_id  INT UNSIGNED  NOT NULL,
   warehouse_id     INT UNSIGNED  NOT NULL,
   item_id          INT UNSIGNED  NOT NULL,
@@ -179,14 +254,15 @@ CREATE TABLE stock_movements (
   quantity         DECIMAL(15,3) NOT NULL,          -- (+) nhập, (-) xuất
   moved_at         DATETIME      NOT NULL DEFAULT CURRENT_TIMESTAMP,  -- ngày giờ thực tế
   created_by       INT UNSIGNED  NOT NULL,
-  -- Chống ghi đúp: 1 dòng chứng từ chỉ sinh tối đa 1 phát sinh cho mỗi kho
-  -- (TRANSFER sinh 2 dòng: -kho đi, +kho đến -> khác warehouse_id nên hợp lệ)
-  UNIQUE KEY uq_sm_line_wh (voucher_line_id, warehouse_id),
+  -- Chống ghi đúp: trong 1 đợt, 1 dòng chứng từ chỉ sinh tối đa 1 phát sinh cho mỗi kho
+  -- (gửi điều chuyển sinh 2 dòng: -kho đi, +đang đi đường -> khác warehouse_id nên hợp lệ)
+  UNIQUE KEY uq_sm_posting_line_wh (posting_id, voucher_line_id, warehouse_id),
   KEY idx_sm_stock (warehouse_id, item_id, batch_id, moved_at),
   KEY idx_sm_item_time (item_id, moved_at),
   KEY idx_sm_voucher (voucher_id),
   KEY idx_sm_moved_at (moved_at),
   CONSTRAINT fk_sm_voucher FOREIGN KEY (voucher_id)        REFERENCES vouchers(id),
+  CONSTRAINT fk_sm_posting FOREIGN KEY (posting_id)        REFERENCES voucher_postings(id),
   CONSTRAINT fk_sm_line    FOREIGN KEY (voucher_line_id)   REFERENCES voucher_lines(id),
   CONSTRAINT fk_sm_wh      FOREIGN KEY (warehouse_id)      REFERENCES warehouses(id),
   CONSTRAINT fk_sm_item    FOREIGN KEY (item_id)           REFERENCES items(id),
@@ -204,14 +280,67 @@ CREATE TABLE stocks (
   warehouse_id  INT UNSIGNED  NOT NULL,
   item_id       INT UNSIGNED  NOT NULL,
   batch_id      INT UNSIGNED  NOT NULL,
-  quantity      DECIMAL(15,3) NOT NULL DEFAULT 0,
+  quantity      DECIMAL(15,3) NOT NULL DEFAULT 0,   -- tồn thực (hàng đang nằm trong kho)
+  -- Đang giữ chỗ cho phiếu xuất / điều chuyển đã duyệt nhưng hàng chưa rời kho.
+  -- Có thể xuất = quantity - reserved
+  reserved      DECIMAL(15,3) NOT NULL DEFAULT 0,
   updated_at    DATETIME      NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
   UNIQUE KEY uq_stocks (warehouse_id, item_id, batch_id),   -- dùng cho INSERT ... ON DUPLICATE KEY UPDATE
   KEY idx_stocks_item (item_id),
   CONSTRAINT fk_stocks_wh    FOREIGN KEY (warehouse_id)      REFERENCES warehouses(id),
   CONSTRAINT fk_stocks_item  FOREIGN KEY (item_id)           REFERENCES items(id),
   CONSTRAINT fk_stocks_batch FOREIGN KEY (batch_id, item_id) REFERENCES batches(id, item_id),
-  CONSTRAINT ck_stocks_non_negative CHECK (quantity >= 0)   -- KHÔNG BAO GIỜ ÂM
+  CONSTRAINT ck_stocks_non_negative CHECK (quantity >= 0),  -- KHÔNG BAO GIỜ ÂM
+  -- Không giữ chỗ quá số hàng thực có (2 phiếu cùng giữ 1 lô: phiếu sau bị CSDL chặn nếu vượt)
+  CONSTRAINT ck_stocks_reserved CHECK (reserved >= 0 AND reserved <= quantity)
+) ENGINE=InnoDB;
+
+-- =====================================================================
+-- 5b. YÊU CẦU ĐIỀU CHUYỂN: kho CẦN hàng đề nghị kho CÓ hàng chuyển sang
+--     PENDING  -> ACCEPTED (kho có hàng đồng ý: hệ thống chọn lô, lập phiếu điều chuyển đã giữ hàng)
+--              -> DECLINED (từ chối, có lý do) | CANCELLED (bên yêu cầu rút lại)
+-- =====================================================================
+
+CREATE TABLE transfer_requests (
+  id                   INT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
+  code                 VARCHAR(30)  NOT NULL,       -- YC-2026-0001
+  from_warehouse_id    INT UNSIGNED NOT NULL,       -- kho được đề nghị gửi hàng
+  to_warehouse_id      INT UNSIGNED NOT NULL,       -- kho cần hàng (bên lập yêu cầu)
+  needed_by            DATE         NULL,           -- cần trước ngày
+  reason               VARCHAR(255) NOT NULL,       -- vd: Khách Minh Anh đặt 20 thùng, giao 30/10
+  status               ENUM('PENDING','ACCEPTED','DECLINED','CANCELLED') NOT NULL DEFAULT 'PENDING',
+  decision_note        VARCHAR(255) NULL,
+  transfer_voucher_id  INT UNSIGNED NULL,           -- phiếu điều chuyển sinh ra khi đồng ý
+  client_token         CHAR(32)     NULL,
+  created_by           INT UNSIGNED NOT NULL,
+  created_at           DATETIME     NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  decided_by           INT UNSIGNED NULL,
+  decided_at           DATETIME     NULL,
+  UNIQUE KEY uq_tr_code (code),
+  UNIQUE KEY uq_tr_token (client_token),
+  UNIQUE KEY uq_tr_voucher (transfer_voucher_id),
+  KEY idx_tr_from_status (from_warehouse_id, status),
+  KEY idx_tr_to_status (to_warehouse_id, status),
+  CONSTRAINT fk_tr_from    FOREIGN KEY (from_warehouse_id)   REFERENCES warehouses(id),
+  CONSTRAINT fk_tr_to      FOREIGN KEY (to_warehouse_id)     REFERENCES warehouses(id),
+  CONSTRAINT fk_tr_voucher FOREIGN KEY (transfer_voucher_id) REFERENCES vouchers(id),
+  CONSTRAINT fk_tr_creator FOREIGN KEY (created_by)          REFERENCES users(id),
+  CONSTRAINT fk_tr_decider FOREIGN KEY (decided_by)          REFERENCES users(id),
+  CONSTRAINT ck_tr_warehouses CHECK (from_warehouse_id <> to_warehouse_id),
+  CONSTRAINT ck_tr_reason CHECK (reason <> ''),
+  CONSTRAINT ck_tr_accepted CHECK (status <> 'ACCEPTED' OR transfer_voucher_id IS NOT NULL),
+  CONSTRAINT ck_tr_decided CHECK (status = 'PENDING' OR (decided_by IS NOT NULL AND decided_at IS NOT NULL))
+) ENGINE=InnoDB;
+
+CREATE TABLE transfer_request_lines (
+  id          INT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
+  request_id  INT UNSIGNED  NOT NULL,
+  item_id     INT UNSIGNED  NOT NULL,
+  quantity    DECIMAL(15,3) NOT NULL,
+  UNIQUE KEY uq_trl (request_id, item_id),
+  CONSTRAINT fk_trl_request FOREIGN KEY (request_id) REFERENCES transfer_requests(id) ON DELETE CASCADE,
+  CONSTRAINT fk_trl_item    FOREIGN KEY (item_id)    REFERENCES items(id),
+  CONSTRAINT ck_trl_qty CHECK (quantity > 0)
 ) ENGINE=InnoDB;
 
 -- =====================================================================
@@ -283,20 +412,34 @@ BEGIN
     SET MESSAGE_TEXT = 'stock_movements chi duoc INSERT: khong duoc DELETE so phat sinh';
 END$$
 
--- 7.2 Chỉ được ghi sổ cho chứng từ đang PENDING (đang trong transaction duyệt)
---     và phát sinh phải khớp với dòng chứng từ
+-- 7.2 Chỉ ghi sổ được ở đúng bước của chứng từ, và phát sinh phải khớp đợt + dòng chứng từ
+--     RECEIVE: phiếu nhập đã duyệt / nhận một phần   SHIP: phiếu xuất đã duyệt (đang giữ hàng)
+--     SEND   : điều chuyển đã duyệt                  ARRIVE: điều chuyển đang đi đường / nhận thiếu
+--     ADJUST : phiếu điều chỉnh đang PENDING (đang trong transaction duyệt)
 CREATE TRIGGER trg_sm_before_insert BEFORE INSERT ON stock_movements
 FOR EACH ROW
 BEGIN
-  DECLARE v_status VARCHAR(10);
+  DECLARE v_status VARCHAR(12);
+  DECLARE v_type VARCHAR(12);
+  DECLARE p_voucher INT UNSIGNED;
+  DECLARE p_kind VARCHAR(10);
   DECLARE v_line_voucher INT UNSIGNED;
   DECLARE v_line_item INT UNSIGNED;
   DECLARE v_line_batch INT UNSIGNED;
 
-  SELECT status INTO v_status FROM vouchers WHERE id = NEW.voucher_id;
-  IF v_status <> 'PENDING' THEN
+  SELECT status, type INTO v_status, v_type FROM vouchers WHERE id = NEW.voucher_id;
+  SELECT voucher_id, kind INTO p_voucher, p_kind FROM voucher_postings WHERE id = NEW.posting_id;
+  IF p_voucher IS NULL OR p_voucher <> NEW.voucher_id THEN
     SIGNAL SQLSTATE '45000'
-      SET MESSAGE_TEXT = 'Chung tu da duyet/tu choi: khong duoc ghi so them (chong ghi dup)';
+      SET MESSAGE_TEXT = 'Phat sinh khong thuoc dot ghi so cua chung tu nay';
+  END IF;
+  IF NOT (   (p_kind = 'RECEIVE' AND v_type = 'IMPORT'     AND v_status IN ('APPROVED', 'PARTIAL'))
+          OR (p_kind = 'SHIP'    AND v_type = 'EXPORT'     AND v_status = 'APPROVED')
+          OR (p_kind = 'SEND'    AND v_type = 'TRANSFER'   AND v_status = 'APPROVED')
+          OR (p_kind = 'ARRIVE'  AND v_type = 'TRANSFER'   AND v_status IN ('IN_TRANSIT', 'DISCREPANCY'))
+          OR (p_kind = 'ADJUST'  AND v_type = 'ADJUSTMENT' AND v_status = 'PENDING')) THEN
+    SIGNAL SQLSTATE '45000'
+      SET MESSAGE_TEXT = 'Chung tu khong o buoc cho phep ghi so nay (chong ghi dup / ghi sai buoc)';
   END IF;
 
   SELECT voucher_id, item_id, batch_id
@@ -310,13 +453,42 @@ BEGIN
   END IF;
 END$$
 
--- 7.3 Chứng từ đã APPROVED/REJECTED thì không sửa / không xóa
+-- 7.3 Máy trạng thái của chứng từ:
+--     - đã kết thúc thì không sửa được nữa
+--     - đang chạy (đã duyệt) chỉ được đổi trạng thái + thông tin tiến độ, không sửa nội dung phiếu
+--     - chỉ cho các bước chuyển hợp lệ theo từng loại phiếu
 CREATE TRIGGER trg_vouchers_before_update BEFORE UPDATE ON vouchers
 FOR EACH ROW
 BEGIN
-  IF OLD.status <> 'PENDING' THEN
+  IF OLD.status IN ('COMPLETED', 'CLOSED', 'CANCELLED', 'REJECTED')
+     OR (OLD.type = 'ADJUSTMENT' AND OLD.status = 'APPROVED') THEN
     SIGNAL SQLSTATE '45000'
-      SET MESSAGE_TEXT = 'Chung tu da duyet/tu choi: khong duoc sua. Hay lap chung tu dieu chinh';
+      SET MESSAGE_TEXT = 'Chung tu da ket thuc: khong duoc sua. Hay lap chung tu dieu chinh';
+  END IF;
+
+  IF OLD.status <> 'PENDING' AND (
+         NOT (NEW.code <=> OLD.code) OR NOT (NEW.type <=> OLD.type)
+      OR NOT (NEW.warehouse_id <=> OLD.warehouse_id) OR NOT (NEW.to_warehouse_id <=> OLD.to_warehouse_id)
+      OR NOT (NEW.voucher_date <=> OLD.voucher_date) OR NOT (NEW.reason <=> OLD.reason)
+      OR NOT (NEW.created_by <=> OLD.created_by) OR NOT (NEW.approved_by <=> OLD.approved_by)
+      OR NOT (NEW.approved_at <=> OLD.approved_at) OR NOT (NEW.reference_voucher_id <=> OLD.reference_voucher_id)) THEN
+    SIGNAL SQLSTATE '45000'
+      SET MESSAGE_TEXT = 'Chung tu da duyet: khong duoc sua noi dung phieu';
+  END IF;
+
+  IF NEW.status <> OLD.status AND CONCAT(OLD.type, ':', OLD.status, '>', NEW.status) NOT IN (
+       'IMPORT:PENDING>APPROVED', 'IMPORT:PENDING>REJECTED',
+       'IMPORT:APPROVED>PARTIAL', 'IMPORT:APPROVED>COMPLETED', 'IMPORT:APPROVED>CLOSED',
+       'IMPORT:PARTIAL>COMPLETED', 'IMPORT:PARTIAL>CLOSED',
+       'EXPORT:PENDING>APPROVED', 'EXPORT:PENDING>REJECTED',
+       'EXPORT:APPROVED>COMPLETED', 'EXPORT:APPROVED>CANCELLED',
+       'TRANSFER:PENDING>APPROVED', 'TRANSFER:PENDING>REJECTED',
+       'TRANSFER:APPROVED>IN_TRANSIT', 'TRANSFER:APPROVED>CANCELLED',
+       'TRANSFER:IN_TRANSIT>COMPLETED', 'TRANSFER:IN_TRANSIT>DISCREPANCY',
+       'TRANSFER:DISCREPANCY>IN_TRANSIT', 'TRANSFER:DISCREPANCY>COMPLETED',
+       'ADJUSTMENT:PENDING>APPROVED', 'ADJUSTMENT:PENDING>REJECTED') THEN
+    SIGNAL SQLSTATE '45000'
+      SET MESSAGE_TEXT = 'Buoc chuyen trang thai chung tu khong hop le';
   END IF;
 END$$
 
@@ -326,6 +498,40 @@ BEGIN
   IF OLD.status <> 'PENDING' THEN
     SIGNAL SQLSTATE '45000'
       SET MESSAGE_TEXT = 'Chung tu da duyet/tu choi: khong duoc xoa';
+  END IF;
+END$$
+
+-- 7.3b Đợt ghi sổ và dòng của nó là lịch sử: chỉ thêm, không sửa / xóa
+CREATE TRIGGER trg_vp_no_update BEFORE UPDATE ON voucher_postings
+FOR EACH ROW
+BEGIN
+  SIGNAL SQLSTATE '45000' SET MESSAGE_TEXT = 'Dot ghi so chi duoc INSERT';
+END$$
+
+CREATE TRIGGER trg_vp_no_delete BEFORE DELETE ON voucher_postings
+FOR EACH ROW
+BEGIN
+  SIGNAL SQLSTATE '45000' SET MESSAGE_TEXT = 'Dot ghi so chi duoc INSERT';
+END$$
+
+CREATE TRIGGER trg_vpl_no_update BEFORE UPDATE ON voucher_posting_lines
+FOR EACH ROW
+BEGIN
+  SIGNAL SQLSTATE '45000' SET MESSAGE_TEXT = 'Dot ghi so chi duoc INSERT';
+END$$
+
+CREATE TRIGGER trg_vpl_no_delete BEFORE DELETE ON voucher_posting_lines
+FOR EACH ROW
+BEGIN
+  SIGNAL SQLSTATE '45000' SET MESSAGE_TEXT = 'Dot ghi so chi duoc INSERT';
+END$$
+
+-- 7.3c Yêu cầu điều chuyển đã xử lý thì khóa
+CREATE TRIGGER trg_tr_before_update BEFORE UPDATE ON transfer_requests
+FOR EACH ROW
+BEGIN
+  IF OLD.status <> 'PENDING' THEN
+    SIGNAL SQLSTATE '45000' SET MESSAGE_TEXT = 'Yeu cau dieu chuyen da xu ly: khong duoc sua';
   END IF;
 END$$
 
@@ -346,15 +552,23 @@ BEGIN
   END IF;
 END$$
 
+-- Phiếu đang chạy (đã duyệt, chưa kết thúc): chỉ được cập nhật cột tiến độ, không sửa hàng / lô / số lượng
 CREATE TRIGGER trg_vl_before_update BEFORE UPDATE ON voucher_lines
 FOR EACH ROW
 BEGIN
-  DECLARE v_status VARCHAR(10);
+  DECLARE v_status VARCHAR(12);
   DECLARE v_type VARCHAR(12);
   SELECT status, type INTO v_status, v_type FROM vouchers WHERE id = OLD.voucher_id;
-  IF v_status <> 'PENDING' OR NEW.voucher_id <> OLD.voucher_id THEN
+  IF NEW.voucher_id <> OLD.voucher_id
+     OR v_status IN ('COMPLETED', 'CLOSED', 'CANCELLED', 'REJECTED')
+     OR (v_type = 'ADJUSTMENT' AND v_status = 'APPROVED') THEN
     SIGNAL SQLSTATE '45000'
-      SET MESSAGE_TEXT = 'Chung tu khong con PENDING: khong duoc sua dong';
+      SET MESSAGE_TEXT = 'Chung tu da ket thuc: khong duoc sua dong';
+  END IF;
+  IF v_status <> 'PENDING' AND (NEW.item_id <> OLD.item_id OR NEW.batch_id <> OLD.batch_id
+                                OR NEW.quantity <> OLD.quantity OR NOT (NEW.note <=> OLD.note)) THEN
+    SIGNAL SQLSTATE '45000'
+      SET MESSAGE_TEXT = 'Chung tu khong con PENDING: chi duoc cap nhat tien do';
   END IF;
   IF v_type <> 'ADJUSTMENT' AND NEW.quantity <= 0 THEN
     SIGNAL SQLSTATE '45000'
@@ -439,26 +653,66 @@ SELECT sm.id, sm.moved_at,
        i.sku, i.name AS item_name, i.unit,
        b.batch_no, b.expiry_date,
        v.code AS voucher_code, v.type AS voucher_type, v.reason,
+       p.code AS posting_code, p.kind AS posting_kind,
        CASE WHEN sm.quantity > 0 THEN sm.quantity ELSE 0 END  AS qty_in,
        CASE WHEN sm.quantity < 0 THEN -sm.quantity ELSE 0 END AS qty_out,
        SUM(sm.quantity) OVER (
          PARTITION BY sm.warehouse_id, sm.item_id, sm.batch_id
          ORDER BY sm.moved_at, sm.id
        ) AS balance_after,
-       sm.warehouse_id, sm.item_id, sm.batch_id, sm.voucher_id
+       sm.warehouse_id, sm.item_id, sm.batch_id, sm.voucher_id, sm.posting_id, sm.created_by
 FROM stock_movements sm
-JOIN warehouses w ON w.id = sm.warehouse_id
-JOIN items i      ON i.id = sm.item_id
-JOIN batches b    ON b.id = sm.batch_id
-JOIN vouchers v   ON v.id = sm.voucher_id;
+JOIN warehouses w       ON w.id = sm.warehouse_id
+JOIN items i            ON i.id = sm.item_id
+JOIN batches b          ON b.id = sm.batch_id
+JOIN vouchers v         ON v.id = sm.voucher_id
+JOIN voucher_postings p ON p.id = sm.posting_id;
 
 -- 8.3 Tồn kho hiện tại (đầy đủ tên) — dùng cho trang danh sách tồn
 CREATE VIEW v_current_stock AS
-SELECT s.warehouse_id, w.code AS warehouse_code, w.name AS warehouse_name,
+SELECT s.warehouse_id, w.code AS warehouse_code, w.name AS warehouse_name, w.is_transit,
        s.item_id, i.sku, i.name AS item_name, i.unit,
        s.batch_id, b.batch_no, b.expiry_date,
-       s.quantity, s.updated_at
+       s.quantity, s.reserved, s.quantity - s.reserved AS available, s.updated_at
 FROM stocks s
 JOIN warehouses w ON w.id = s.warehouse_id
 JOIN items i      ON i.id = s.item_id
 JOIN batches b    ON b.id = s.batch_id;
+
+-- 8.4 Đối chiếu hàng đang giữ chỗ: stocks.reserved = tổng số lượng các phiếu xuất / điều chuyển
+--     đã duyệt nhưng hàng chưa rời kho (trạng thái APPROVED)
+CREATE VIEW v_reservation_check AS
+SELECT s.warehouse_id, s.item_id, s.batch_id,
+       s.reserved                                AS reserved_qty,
+       COALESCE(r.expected, 0)                   AS expected_qty,
+       (s.reserved = COALESCE(r.expected, 0))    AS is_matched
+FROM stocks s
+LEFT JOIN (
+  SELECT v.warehouse_id, vl.item_id, vl.batch_id, SUM(vl.quantity) AS expected
+  FROM vouchers v
+  JOIN voucher_lines vl ON vl.voucher_id = v.id
+  WHERE v.type IN ('EXPORT', 'TRANSFER') AND v.status = 'APPROVED'
+  GROUP BY v.warehouse_id, vl.item_id, vl.batch_id
+) r ON r.warehouse_id = s.warehouse_id AND r.item_id = s.item_id AND r.batch_id = s.batch_id;
+
+-- 8.5 Đối chiếu hàng đang đi đường: tồn kho ảo = tổng (đã gửi - đã nhận - hao hụt) của các phiếu điều chuyển
+CREATE VIEW v_transit_check AS
+SELECT k.item_id, k.batch_id,
+       COALESCE(s.quantity, 0)                          AS transit_stock,
+       COALESCE(t.expected, 0)                          AS expected_qty,
+       (COALESCE(s.quantity, 0) = COALESCE(t.expected, 0)) AS is_matched
+FROM (
+  SELECT s.item_id, s.batch_id FROM stocks s JOIN warehouses w ON w.id = s.warehouse_id AND w.is_transit = 1
+  UNION
+  SELECT vl.item_id, vl.batch_id FROM voucher_lines vl JOIN vouchers v ON v.id = vl.voucher_id AND v.type = 'TRANSFER'
+) k
+LEFT JOIN (
+  SELECT s.item_id, s.batch_id, SUM(s.quantity) AS quantity
+  FROM stocks s JOIN warehouses w ON w.id = s.warehouse_id AND w.is_transit = 1
+  GROUP BY s.item_id, s.batch_id
+) s ON s.item_id = k.item_id AND s.batch_id = k.batch_id
+LEFT JOIN (
+  SELECT vl.item_id, vl.batch_id, SUM(vl.shipped_qty - vl.received_qty - vl.lost_qty) AS expected
+  FROM voucher_lines vl JOIN vouchers v ON v.id = vl.voucher_id AND v.type = 'TRANSFER'
+  GROUP BY vl.item_id, vl.batch_id
+) t ON t.item_id = k.item_id AND t.batch_id = k.batch_id;

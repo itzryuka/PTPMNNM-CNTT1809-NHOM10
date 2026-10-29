@@ -29,8 +29,9 @@ $modalIsEdit = ($modalValues['action'] ?? '') === 'update';
             <div class="form-grid">
                 <div class="form-group">
                     <label for="itemSku">Mã hàng *</label>
-                    <input class="form-control" id="itemSku" name="sku" data-field value="<?= e($modalValues['sku'] ?? '') ?>" required maxlength="30"
+                    <input class="form-control" id="itemSku" name="sku" data-field data-check="items:code" value="<?= e($modalValues['sku'] ?? '') ?>" required maxlength="30"
                            pattern="[A-Za-z0-9._\-]+" title="Chữ không dấu, số và . _ -" placeholder="Vd: SP031" style="text-transform: uppercase;">
+                    <small class="field-check" hidden></small>
                 </div>
                 <div class="form-group">
                     <label for="itemUnit">Đơn vị tính *</label>
@@ -41,7 +42,8 @@ $modalIsEdit = ($modalValues['action'] ?? '') === 'update';
                 </div>
                 <div class="form-group span-all">
                     <label for="itemName">Tên mặt hàng *</label>
-                    <input class="form-control" id="itemName" name="name" data-field value="<?= e($modalValues['name'] ?? '') ?>" required maxlength="150" placeholder="Vd: Nước cam Twister 455ml">
+                    <input class="form-control" id="itemName" name="name" data-field data-check="items:name" value="<?= e($modalValues['name'] ?? '') ?>" required maxlength="150" placeholder="Vd: Nước cam Twister 455ml">
+                    <small class="field-check" hidden></small>
                 </div>
                 <div class="form-group span-all">
                     <label for="itemDescription">Mô tả</label>

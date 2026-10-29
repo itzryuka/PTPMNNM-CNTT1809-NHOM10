@@ -8,13 +8,17 @@ require_once __DIR__ . '/../functions/warehouse_functions.php';
 
 $user = requireLogin('../');
 
-// ===== (2) ĐỌC THAM SỐ TỪ URL: ?q=...&size=...&page=... =====
+// ===== (2) ĐỌC THAM SỐ TỪ URL: ?q=...&status=...&sort=...&dir=...&size=...&page=... =====
 [$keyword, $pageSize, $page] = readListParams();
+$status = array_key_exists($_GET['status'] ?? '', WAREHOUSE_STATUS_FILTERS) ? $_GET['status'] : 'all';
+$sort   = readSort(WAREHOUSE_SORT_COLUMNS, 'code');
 
 // Kho user được phân quyền (requireLogin đọc lại từ CSDL ở mỗi request)
 $allowedWarehouses = $user['warehouses'];
-// Thêm / sửa / xóa / nhập file: chỉ quản lý (server cũng kiểm tra lại trong handle/warehouse_process.php)
+// Sửa thông tin kho: quản lý (chỉ kho được giao). Tạo / xóa / mở lại / nhập file kho mới: chỉ quản trị.
+// Server kiểm tra lại trong functions/warehouse_functions.php
 $canManage = isManager($user);
+$isAdmin   = isAdmin($user);
 // Lần lưu trước trong popup bị lỗi -> mở lại popup kèm dữ liệu đã nhập và lỗi
 $modalState = takeModalState('warehouse_modal');
 
@@ -24,16 +28,18 @@ $totalWarehouses = 0;
 $dbError         = '';
 try {
     $pdo             = getDbConnection();
-    $totalWarehouses = countWarehouses($pdo, $keyword, $allowedWarehouses);
+    $totalWarehouses = countWarehouses($pdo, $keyword, $allowedWarehouses, $status);
     $totalPages      = max(1, (int) ceil($totalWarehouses / $pageSize));
     $page            = min($page, $totalPages);
-    $warehouses      = getWarehouses($pdo, $keyword, $pageSize, ($page - 1) * $pageSize, $allowedWarehouses);
+    $warehouses      = getWarehouses($pdo, $keyword, $pageSize, ($page - 1) * $pageSize, $allowedWarehouses, $status, $sort);
 } catch (PDOException $e) {
     $totalPages = 1;
     $dbError    = 'Không thể tải dữ liệu: ' . $e->getMessage();
 }
 
-$exportUrl = '../handle/export.php?' . http_build_query(['entity' => 'warehouses', 'q' => $keyword]);
+$exportUrl = '../handle/export.php?' . http_build_query([
+    'entity' => 'warehouses', 'q' => $keyword, 'status' => $status, 'sort' => $sort[0], 'dir' => $sort[1],
+]);
 
 // ===== (4) GIAO DIỆN =====
 $pageTitle  = 'Danh sách Kho';
@@ -47,7 +53,7 @@ require __DIR__ . '/layout/header.php';
                 <div class="toolbar-top">
                     <a class="btn btn-template" href="../handle/export.php?entity=warehouses&amp;template=1" title="File CSV mẫu để nhập danh sách kho"><i class="fas fa-download"></i> Tải mẫu</a>
                     <a class="btn btn-export" href="<?= e($exportUrl) ?>" title="Xuất danh sách đang lọc ra file CSV (mở bằng Excel)"><i class="fas fa-file-export"></i> Xuất Excel</a>
-                    <?php if ($canManage): ?>
+                    <?php if ($isAdmin): ?>
                         <form class="inline-form" method="post" action="../handle/warehouse_process.php" enctype="multipart/form-data">
                             <input type="hidden" name="csrf_token" value="<?= e(csrfToken()) ?>">
                             <input type="hidden" name="action" value="import">
@@ -61,23 +67,29 @@ require __DIR__ . '/layout/header.php';
 
                 <div class="toolbar-bottom">
                     <div class="toolbar-bottom-left">
-                        <?php if ($canManage): ?>
+                        <?php if ($isAdmin): ?>
                             <button class="btn btn-danger hidden" id="btnDeleteSelected" type="submit" form="bulkForm" data-confirm-ok="Xóa"
                                     data-confirm="Xóa các kho đã chọn? Kho đã có lịch sử sẽ được chuyển sang ngừng hoạt động.">
                                 <i class="fas fa-trash-alt"></i> Xóa đã chọn
                             </button>
                         <?php endif; ?>
                     </div>
-                    <div class="toolbar-bottom-right">
-                        <!-- Ô lọc: gửi ?q=... lên server, server lọc bằng SQL LIKE -->
-                        <form class="search-box" method="get">
+                    <!-- Ô lọc: gửi ?q=...&status=... lên server, server lọc bằng SQL -->
+                    <form class="toolbar-bottom-right" method="get">
+                        <input type="hidden" name="size" value="<?= $pageSize ?>">
+                        <?= sortHiddenInputs($sort) ?>
+                        <select class="filter-select" name="status" onchange="this.form.submit()" title="Tình trạng kho">
+                            <?php foreach (WAREHOUSE_STATUS_FILTERS as $statusKey => $statusLabel): ?>
+                                <option value="<?= $statusKey ?>" <?= $status === $statusKey ? 'selected' : '' ?>><?= e($statusLabel) ?></option>
+                            <?php endforeach; ?>
+                        </select>
+                        <div class="search-box">
                             <input type="text" name="q" value="<?= e($keyword) ?>" placeholder="Lọc theo mã / tên / địa chỉ...">
-                            <input type="hidden" name="size" value="<?= $pageSize ?>">
                             <button type="submit"><i class="fas fa-search" style="color: #94a3b8;"></i></button>
-                        </form>
+                        </div>
                         <a class="btn btn-icon" href="?size=<?= $pageSize ?>" title="Tải lại"><i class="fas fa-sync-alt"></i></a>
                         <span class="total-count">Tổng số: <strong><?= $totalWarehouses ?></strong></span>
-                    </div>
+                    </form>
                 </div>
             </div>
 
@@ -86,15 +98,15 @@ require __DIR__ . '/layout/header.php';
                 <table>
                     <thead>
                         <tr>
-                            <?php if ($canManage): ?>
+                            <?php if ($isAdmin): ?>
                                 <th style="width: 40px;"><input type="checkbox" id="selectAll"></th>
                             <?php endif; ?>
-                            <th>Mã Kho</th>
-                            <th>Tên Kho</th>
-                            <th>Địa Chỉ</th>
-                            <th class="text-right">Số Mặt Hàng</th>
-                            <th class="text-right">Số Lô Đang Tồn</th>
-                            <th>Trạng Thái</th>
+                            <?= sortHeader('Mã Kho', 'code', $sort) ?>
+                            <?= sortHeader('Tên Kho', 'name', $sort) ?>
+                            <?= sortHeader('Địa Chỉ', 'address', $sort) ?>
+                            <?= sortHeader('Số Mặt Hàng', 'items', $sort, 'text-right', 'desc') ?>
+                            <?= sortHeader('Số Lô Đang Tồn', 'batches', $sort, 'text-right', 'desc') ?>
+                            <?= sortHeader('Trạng Thái', 'status', $sort, '', 'desc') ?>
                             <th style="text-align: center;">Thao Tác</th>
                         </tr>
                     </thead>
@@ -107,7 +119,7 @@ require __DIR__ . '/layout/header.php';
                             <?php foreach ($warehouses as $warehouse): ?>
                                 <?php $warehouseId = (int) $warehouse['id']; ?>
                                 <tr class="<?= $warehouse['is_active'] ? '' : 'row-inactive' ?>">
-                                    <?php if ($canManage): ?>
+                                    <?php if ($isAdmin): ?>
                                         <td><input type="checkbox" class="row-checkbox" name="ids[]" value="<?= $warehouseId ?>" form="bulkForm"></td>
                                     <?php endif; ?>
                                     <td><?= e($warehouse['code']) ?></td>
@@ -121,6 +133,12 @@ require __DIR__ . '/layout/header.php';
                                         <?php else: ?>
                                             <span class="badge badge-inactive">Ngừng hoạt động</span>
                                         <?php endif; ?>
+                                        <?php if ($warehouse['open_count_code']): ?>
+                                            <span class="badge badge-pending" title="Đợt <?= e($warehouse['open_count_code']) ?>: kho tạm thời không nhận / xuất / gửi / giữ hàng được"><i class="fas fa-snowflake"></i> Đang kiểm kê</span>
+                                        <?php endif; ?>
+                                        <?php if ((int) $warehouse['pending_count'] > 0): ?>
+                                            <span class="badge badge-pending"><?= (int) $warehouse['pending_count'] ?> phiếu chờ duyệt</span>
+                                        <?php endif; ?>
                                     </td>
                                     <td class="row-actions">
                                         <a href="warehouse_detail.php?id=<?= $warehouseId ?>" title="Xem chi tiết"><i class="fas fa-eye icon-view"></i></a>
@@ -128,10 +146,10 @@ require __DIR__ . '/layout/header.php';
                                             <?php $fill = ['action' => 'update', 'id' => $warehouseId, 'code' => $warehouse['code'], 'name' => $warehouse['name'], 'address' => $warehouse['address'] ?? '']; ?>
                                             <button class="icon-btn" type="button" title="Chỉnh sửa" data-modal-open="warehouseModal"
                                                     data-modal-title="Sửa <?= e($warehouse['name']) ?>" data-fill="<?= e(json_encode($fill, JSON_UNESCAPED_UNICODE)) ?>"><i class="fas fa-edit icon-edit"></i></button>
-                                            <?php if ($warehouse['is_active']): ?>
+                                            <?php if ($isAdmin && $warehouse['is_active']): ?>
                                                 <button class="icon-btn" type="submit" form="deleteForm" name="id" value="<?= $warehouseId ?>" title="Xóa" data-confirm-ok="Xóa"
                                                         data-confirm="Xóa <?= e($warehouse['name']) ?>? Nếu kho đã có lịch sử chứng từ, kho sẽ được chuyển sang ngừng hoạt động."><i class="fas fa-trash-alt icon-delete"></i></button>
-                                            <?php else: ?>
+                                            <?php elseif ($isAdmin): ?>
                                                 <button class="icon-btn restore" type="submit" form="restoreForm" name="id" value="<?= $warehouseId ?>" title="Hoạt động lại"><i class="fas fa-undo"></i></button>
                                             <?php endif; ?>
                                         <?php endif; ?>
@@ -144,7 +162,8 @@ require __DIR__ . '/layout/header.php';
             </div>
 
             <?php if ($canManage): ?>
-                <!-- Form ẩn cho nút xóa / hoạt động lại / xóa nhiều (nút trong bảng gắn vào bằng thuộc tính form="...") -->
+                <!-- Form ẩn cho nút xóa / hoạt động lại / xóa nhiều (nút trong bảng gắn vào bằng thuộc tính form="..."); chỉ quản trị -->
+                <?php if ($isAdmin): ?>
                 <?php foreach (['bulkForm' => 'bulk_delete', 'deleteForm' => 'delete', 'restoreForm' => 'restore'] as $formId => $formAction): ?>
                     <form id="<?= $formId ?>" method="post" action="../handle/warehouse_process.php">
                         <input type="hidden" name="csrf_token" value="<?= e(csrfToken()) ?>">
@@ -152,6 +171,7 @@ require __DIR__ . '/layout/header.php';
                         <input type="hidden" name="return_query" value="<?= e($_SERVER['QUERY_STRING'] ?? '') ?>">
                     </form>
                 <?php endforeach; ?>
+                <?php endif; ?>
 
                 <?php $modalReturnTo = 'list'; require __DIR__ . '/partials/warehouse_modal.php'; ?>
             <?php endif; ?>

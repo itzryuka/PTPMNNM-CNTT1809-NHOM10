@@ -47,22 +47,30 @@
 
     form.addEventListener('submit', () => { dirty = false; });
 
-    // Duyệt / hủy: hỏi xác nhận; nếu còn số đếm chưa lưu thì bắt lưu trước
+    // Duyệt / hủy: còn số đếm chưa lưu thì bắt lưu trước (popup xác nhận + khóa nút do js/modal.js lo)
     document.querySelectorAll('.js-decision').forEach(decision => {
         decision.addEventListener('submit', event => {
-            if (dirty) {
-                event.preventDefault();
-                alert('Bạn có số đếm chưa lưu. Hãy bấm "Lưu số đếm" trước khi chốt đợt kiểm kê.');
-                return;
-            }
-            if (!confirm(decision.dataset.confirm)) {
-                event.preventDefault();
-                return;
-            }
-            setTimeout(() => decision.querySelectorAll('button').forEach(b => { b.disabled = true; }), 0);
+            if (!dirty) return;
+            event.preventDefault();
+            appDialog({ alert: true, title: 'Chưa lưu số đếm', message: 'Bạn có số đếm chưa lưu. Hãy bấm "Lưu số đếm" trước khi chốt đợt kiểm kê.' });
         });
     });
 
+    // Bấm link rời trang khi còn số đếm chưa lưu -> hỏi bằng popup
+    document.addEventListener('click', event => {
+        const link = event.target.closest('a[href]');
+        if (!dirty || !link || link.target === '_blank' || link.getAttribute('href').startsWith('#')
+            || event.ctrlKey || event.metaKey || event.shiftKey) return;
+        event.preventDefault();
+        appDialog({ title: 'Rời trang?', ok: 'Rời trang', message: 'Số đếm vừa nhập chưa được lưu và sẽ mất nếu rời trang.' })
+            .then(leave => {
+                if (!leave) return;
+                dirty = false;
+                window.location.href = link.href;
+            });
+    });
+
+    // Tải lại / đóng tab: trình duyệt chỉ cho hiện hộp thoại mặc định của nó (không thay bằng popup được)
     window.addEventListener('beforeunload', event => {
         if (dirty) event.preventDefault();
     });

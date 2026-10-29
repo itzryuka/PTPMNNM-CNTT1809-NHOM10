@@ -8,15 +8,62 @@ const ITEM_CSV_COLUMNS = [
     'description' => ['mô tả', 'mo ta', 'ghi chú', 'description'],
 ];
 
+// Bộ lọc "Tình trạng" của danh sách mặt hàng (giá trị ?status=...)
+const ITEM_STATUS_FILTERS = [
+    'active'       => 'Đang dùng',
+    'in_stock'     => 'Còn hàng',
+    'out_of_stock' => 'Hết hàng',
+    'expiring'     => 'Có lô sắp hết hạn (≤ 30 ngày)',
+    'expired'      => 'Có lô đã hết hạn còn tồn',
+    'inactive'     => 'Ngừng dùng',
+    'all'          => 'Tất cả',
+];
+const ITEM_EXPIRING_DAYS = 30;
+
+// Cột sắp xếp được (khóa trên URL => biểu thức SQL)
+const ITEM_SORT_COLUMNS = [
+    'sku'       => 'i.sku',
+    'name'      => 'i.name',
+    'unit'      => 'i.unit',
+    'batches'   => 'batch_count',
+    'total_qty' => 'total_qty',
+];
+
+/**
+ * Phạm vi tồn kho tính cho danh sách: các kho user được xem, thu hẹp thêm theo kho đang lọc.
+ * Trả về [điều kiện SQL trên s.warehouse_id, tham số].
+ */
+function itemStockScope(?array $allowedWarehouses, int $warehouseId): array
+{
+    [$sql, $params] = warehouseFilter('s.warehouse_id', $allowedWarehouses);
+    if ($warehouseId > 0) {
+        $sql     .= ' AND s.warehouse_id = ?';
+        $params[] = $warehouseId;
+    }
+    return [$sql, $params];
+}
+
 /**
  * Điều kiện WHERE dùng chung cho đếm và lấy danh sách.
- * $status: 'active' (đang dùng) | 'inactive' (ngừng dùng) | 'all'
+ * $status: một khóa của ITEM_STATUS_FILTERS. Các lọc theo tồn / hạn dùng chỉ xét kho trong phạm vi itemStockScope().
  * Trả về [chuỗi SQL, mảng tham số].
  */
-function buildItemSearchCondition(string $keyword, string $status = 'active'): array
+function buildItemSearchCondition(string $keyword, string $status = 'active', ?array $allowedWarehouses = null, int $warehouseId = 0): array
 {
-    $sql    = ['active' => 'i.is_active = 1', 'inactive' => 'i.is_active = 0'][$status] ?? '1 = 1';
-    $params = [];
+    [$scope, $scopeParams] = itemStockScope($allowedWarehouses, $warehouseId);
+    $hasStock = "EXISTS (SELECT 1 FROM stocks s JOIN batches b ON b.id = s.batch_id
+                         WHERE s.item_id = i.id AND s.quantity > 0 AND $scope%s)";
+    $soon     = (int) ITEM_EXPIRING_DAYS;
+
+    [$sql, $params] = match ($status) {
+        'inactive'     => ['i.is_active = 0', []],
+        'all'          => ['1 = 1', []],
+        'in_stock'     => ['i.is_active = 1 AND ' . sprintf($hasStock, ''), $scopeParams],
+        'out_of_stock' => ['i.is_active = 1 AND NOT ' . sprintf($hasStock, ''), $scopeParams],
+        'expiring'     => ['i.is_active = 1 AND ' . sprintf($hasStock, " AND b.expiry_date BETWEEN CURDATE() AND CURDATE() + INTERVAL $soon DAY"), $scopeParams],
+        'expired'      => ['i.is_active = 1 AND ' . sprintf($hasStock, ' AND b.expiry_date < CURDATE()'), $scopeParams],
+        default        => ['i.is_active = 1', []],
+    };
     if ($keyword !== '') {
         $sql     .= ' AND (i.sku LIKE ? OR i.name LIKE ?)';
         $params[] = "%$keyword%";
@@ -25,9 +72,9 @@ function buildItemSearchCondition(string $keyword, string $status = 'active'): a
     return [$sql, $params];
 }
 
-function countItems(PDO $pdo, string $keyword = '', string $status = 'active'): int
+function countItems(PDO $pdo, string $keyword = '', string $status = 'active', ?array $allowedWarehouses = null, int $warehouseId = 0): int
 {
-    [$where, $params] = buildItemSearchCondition($keyword, $status);
+    [$where, $params] = buildItemSearchCondition($keyword, $status, $allowedWarehouses, $warehouseId);
     $stmt = $pdo->prepare("SELECT COUNT(*) FROM items i WHERE $where");
     $stmt->execute($params);
     return (int) $stmt->fetchColumn();
@@ -35,43 +82,35 @@ function countItems(PDO $pdo, string $keyword = '', string $status = 'active'): 
 
 /**
  * Lấy 1 trang mặt hàng.
- * $allowedWarehouses: danh sách kho user được xem (null = tất cả kho).
- * Tổng tồn và số lô chỉ tính trên các kho đó.
+ * $allowedWarehouses: danh sách kho user được xem (null = tất cả kho); $warehouseId > 0: chỉ tính kho đó.
+ * Tổng tồn và số lô chỉ tính trên các kho đó. $sort = [khóa ITEM_SORT_COLUMNS, 'asc'|'desc'].
  */
-function getItems(PDO $pdo, string $keyword, int $limit, int $offset, ?array $allowedWarehouses = null, string $status = 'active'): array
+function getItems(PDO $pdo, string $keyword, int $limit, int $offset, ?array $allowedWarehouses = null, string $status = 'active',
+                  int $warehouseId = 0, array $sort = ['sku', 'asc']): array
 {
-    $stockJoin   = 's.item_id = i.id';
-    $stockParams = [];
-    if ($allowedWarehouses !== null) {
-        if (empty($allowedWarehouses)) {
-            $stockJoin .= ' AND 1 = 0';             // không có kho nào -> tồn = 0
-        } else {
-            $placeholders = implode(',', array_fill(0, count($allowedWarehouses), '?'));
-            $stockJoin   .= " AND s.warehouse_id IN ($placeholders)";
-            $stockParams  = array_map('intval', $allowedWarehouses);
-        }
-    }
-
-    [$where, $whereParams] = buildItemSearchCondition($keyword, $status);
-    $limit  = max(1, $limit);
-    $offset = max(0, $offset);
+    [$scope, $scopeParams] = itemStockScope($allowedWarehouses, $warehouseId);
+    [$where, $whereParams] = buildItemSearchCondition($keyword, $status, $allowedWarehouses, $warehouseId);
+    $orderBy = orderByClause(ITEM_SORT_COLUMNS, $sort, 'i.sku');
+    $limit   = max(1, $limit);
+    $offset  = max(0, $offset);
 
     $sql = "
         SELECT i.id, i.sku, i.name, i.unit, i.description, i.is_active,
                COALESCE(SUM(s.quantity), 0) AS total_qty,
+               COUNT(DISTINCT CASE WHEN s.quantity > 0 THEN s.batch_id END) AS batch_count,
                GROUP_CONCAT(DISTINCT CASE WHEN s.quantity > 0 THEN b.batch_no END
                             ORDER BY b.batch_no SEPARATOR ', ') AS batch_list
         FROM items i
-        LEFT JOIN stocks s  ON $stockJoin
+        LEFT JOIN stocks s  ON s.item_id = i.id AND $scope
         LEFT JOIN batches b ON b.id = s.batch_id
         WHERE $where
         GROUP BY i.id, i.sku, i.name, i.unit, i.description, i.is_active
-        ORDER BY i.sku
+        ORDER BY $orderBy
         LIMIT $limit OFFSET $offset
     ";
 
     $stmt = $pdo->prepare($sql);
-    $stmt->execute(array_merge($stockParams, $whereParams));
+    $stmt->execute(array_merge($scopeParams, $whereParams));
     return $stmt->fetchAll();
 }
 
@@ -113,7 +152,7 @@ function normalizeItemInput(array $input): array
 {
     $item = [
         'sku'         => strtoupper(trim((string) ($input['sku'] ?? ''))),
-        'name'        => trim((string) ($input['name'] ?? '')),
+        'name'        => normalizeName((string) ($input['name'] ?? '')),
         'unit'        => trim((string) ($input['unit'] ?? '')),
         'description' => trim((string) ($input['description'] ?? '')),
     ];
@@ -141,13 +180,20 @@ function findItemIdBySku(PDO $pdo, string $sku): ?int
     return $id === false ? null : (int) $id;
 }
 
+/** Mã trùng / gần giống, tên trùng (bỏ qua chính bản ghi đang sửa) -> AppException */
+function assertItemUnique(PDO $pdo, array $item, int $excludeId = 0): void
+{
+    $error = catalogCodeConflict($pdo, 'items', $item['sku'], $excludeId) ?? catalogNameConflict($pdo, 'items', $item['name'], $excludeId);
+    if ($error !== null) {
+        throw new AppException($error);
+    }
+}
+
 function createItem(PDO $pdo, array $user, array $input): int
 {
     assertCatalogManager($user);
     $item = normalizeItemInput($input);
-    if (findItemIdBySku($pdo, $item['sku']) !== null) {
-        throw new AppException("Mã hàng {$item['sku']} đã tồn tại.");
-    }
+    assertItemUnique($pdo, $item);
     $stmt = $pdo->prepare('INSERT INTO items (sku, name, unit, description) VALUES (?, ?, ?, ?)');
     $stmt->execute([$item['sku'], $item['name'], $item['unit'], $item['description']]);
     return (int) $pdo->lastInsertId();
@@ -160,10 +206,7 @@ function updateItem(PDO $pdo, array $user, int $itemId, array $input): void
     if (getItem($pdo, $itemId) === null) {
         throw new AppException('Không tìm thấy mặt hàng.');
     }
-    $existing = findItemIdBySku($pdo, $item['sku']);
-    if ($existing !== null && $existing !== $itemId) {
-        throw new AppException("Mã hàng {$item['sku']} đã được dùng cho mặt hàng khác.");
-    }
+    assertItemUnique($pdo, $item, $itemId);
     $stmt = $pdo->prepare('UPDATE items SET sku = ?, name = ?, unit = ?, description = ? WHERE id = ?');
     $stmt->execute([$item['sku'], $item['name'], $item['unit'], $item['description'], $itemId]);
 }
@@ -233,16 +276,31 @@ function restoreItem(PDO $pdo, array $user, int $itemId): void
 function importItems(PDO $pdo, array $user, array $rows): array
 {
     assertCatalogManager($user);
-    $errors = [];
-    $valid  = [];
-    $seen   = [];
+    $errors    = [];
+    $valid     = [];
+    $seenCode  = [];                                    // dạng rút gọn của mã -> dòng (bắt cả SP001 / SP-001 trong cùng file)
+    $seenName  = [];
     foreach ($rows as $line => $row) {
         try {
-            $item = normalizeItemInput($row);
-            if (isset($seen[$item['sku']])) {
-                throw new AppException("trùng mã {$item['sku']} với dòng {$seen[$item['sku']]}");
+            $item    = normalizeItemInput($row);
+            $codeKey = codeKey($item['sku']);
+            $nameKey = mb_strtolower($item['name']);
+            if (isset($seenCode[$codeKey])) {
+                throw new AppException("mã {$item['sku']} trùng hoặc gần giống mã ở dòng {$seenCode[$codeKey]}");
             }
-            $seen[$item['sku']] = $line;
+            if (isset($seenName[$nameKey])) {
+                throw new AppException("tên \"{$item['name']}\" trùng với dòng {$seenName[$nameKey]}");
+            }
+            // Mã đã có -> dòng này là cập nhật: chỉ cần tên không đụng mặt hàng khác.
+            // Mã mới -> không được gần giống mã nào đã có.
+            $existingId = findItemIdBySku($pdo, $item['sku']);
+            if ($existingId === null) {
+                assertItemUnique($pdo, $item);
+            } elseif (($error = catalogNameConflict($pdo, 'items', $item['name'], $existingId)) !== null) {
+                throw new AppException($error);
+            }
+            $seenCode[$codeKey] = $line;
+            $seenName[$nameKey] = $line;
             $valid[$line] = $item;
         } catch (AppException $e) {
             $errors[] = "Dòng $line: " . $e->getMessage();

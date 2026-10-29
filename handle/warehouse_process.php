@@ -76,7 +76,7 @@ try {
     if ($e instanceof PDOException) {
         error_log('[warehouse_process] ' . $e->getMessage());
     }
-    $message = ($e instanceof PDOException ? 'Lỗi CSDL, thao tác đã được hoàn tác: ' : '') . $e->getMessage();
+    $message = $e instanceof PDOException ? dbErrorMessage($e) : $e->getMessage();
     if (in_array($action, ['create', 'update'], true)) {
         // Thêm / sửa lỗi: trang quay về mở lại popup với dữ liệu đã nhập và lỗi ngay trong popup
         keepModalState('warehouse_modal', $_POST, $message);
