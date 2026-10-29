@@ -5,12 +5,15 @@ require_once __DIR__ . '/../functions/db_connection.php';
 require_once __DIR__ . '/../functions/helpers.php';
 require_once __DIR__ . '/../functions/auth.php';
 require_once __DIR__ . '/../functions/item_functions.php';
+require_once __DIR__ . '/../functions/voucher_functions.php';   // getWarehouseOptions()
 
 $user = requireLogin('../');
 
-// ===== (2) ĐỌC THAM SỐ TỪ URL: ?q=...&status=...&size=...&page=... =====
+// ===== (2) ĐỌC THAM SỐ TỪ URL: ?q=...&status=...&warehouse=...&sort=...&dir=...&size=...&page=... =====
 [$keyword, $pageSize, $page] = readListParams();
-$status = in_array($_GET['status'] ?? '', ['active', 'inactive', 'all'], true) ? $_GET['status'] : 'active';
+$status      = array_key_exists($_GET['status'] ?? '', ITEM_STATUS_FILTERS) ? $_GET['status'] : 'active';
+$warehouseId = (int) ($_GET['warehouse'] ?? 0);
+$sort        = readSort(ITEM_SORT_COLUMNS, 'sku');
 
 // Kho user được phân quyền (requireLogin đọc lại từ CSDL ở mỗi request)
 $allowedWarehouses = $user['warehouses'];
@@ -22,21 +25,27 @@ $modalState = takeModalState('item_modal');
 // ===== (3) TRUY VẤN CSDL =====
 $items      = [];
 $units      = [];
+$warehouses = [];
+$nextSku    = '';
 $totalItems = 0;
 $dbError    = '';
 try {
     $pdo        = getDbConnection();
     $units      = getUnitSuggestions($pdo);
-    $totalItems = countItems($pdo, $keyword, $status);
+    $warehouses = getWarehouseOptions($pdo, $allowedWarehouses);
+    $nextSku    = $canManage ? nextCatalogCode($pdo, 'items', 'SP') : '';   // điền sẵn mã gợi ý khi thêm mới
+    $totalItems = countItems($pdo, $keyword, $status, $allowedWarehouses, $warehouseId);
     $totalPages = max(1, (int) ceil($totalItems / $pageSize));
     $page       = min($page, $totalPages);
-    $items      = getItems($pdo, $keyword, $pageSize, ($page - 1) * $pageSize, $allowedWarehouses, $status);
+    $items      = getItems($pdo, $keyword, $pageSize, ($page - 1) * $pageSize, $allowedWarehouses, $status, $warehouseId, $sort);
 } catch (PDOException $e) {
     $totalPages = 1;
     $dbError    = 'Không thể tải dữ liệu: ' . $e->getMessage();
 }
 
-$exportUrl = '../handle/export.php?' . http_build_query(['entity' => 'items', 'q' => $keyword, 'status' => $status]);
+$exportUrl = '../handle/export.php?' . http_build_query([
+    'entity' => 'items', 'q' => $keyword, 'status' => $status, 'warehouse' => $warehouseId, 'sort' => $sort[0], 'dir' => $sort[1],
+]);
 
 // ===== (4) GIAO DIỆN =====
 $pageTitle  = 'Danh sách Mặt Hàng';
@@ -58,7 +67,8 @@ require __DIR__ . '/layout/header.php';
                             <input type="file" name="file" id="importFile" accept=".csv" hidden>
                             <button type="button" class="btn btn-import" data-file-trigger="importFile" title="Nhập file CSV theo mẫu: mã đã có thì cập nhật, mã mới thì thêm"><i class="fas fa-file-excel"></i> Nhập Excel</button>
                         </form>
-                        <button class="btn btn-primary" type="button" data-modal-open="itemModal" data-modal-title="Thêm mặt hàng" data-fill='{"action":"create"}'><i class="fas fa-plus"></i> Thêm Mới</button>
+                        <button class="btn btn-primary" type="button" data-modal-open="itemModal" data-modal-title="Thêm mặt hàng"
+                                data-fill="<?= e(json_encode(['action' => 'create', 'sku' => $nextSku])) ?>"><i class="fas fa-plus"></i> Thêm Mới</button>
                     <?php endif; ?>
                 </div>
 
@@ -71,13 +81,20 @@ require __DIR__ . '/layout/header.php';
                             </button>
                         <?php endif; ?>
                     </div>
-                    <!-- Ô lọc: gửi ?q=...&status=... lên server, server lọc bằng SQL -->
+                    <!-- Ô lọc: gửi ?q=...&status=...&warehouse=... lên server, server lọc bằng SQL -->
                     <form class="toolbar-bottom-right" method="get">
                         <input type="hidden" name="size" value="<?= $pageSize ?>">
-                        <select class="filter-select" name="status" onchange="this.form.submit()">
-                            <option value="active" <?= $status === 'active' ? 'selected' : '' ?>>Đang dùng</option>
-                            <option value="inactive" <?= $status === 'inactive' ? 'selected' : '' ?>>Ngừng dùng</option>
-                            <option value="all" <?= $status === 'all' ? 'selected' : '' ?>>Tất cả</option>
+                        <?= sortHiddenInputs($sort) ?>
+                        <select class="filter-select" name="status" onchange="this.form.submit()" title="Tình trạng mặt hàng / tồn kho">
+                            <?php foreach (ITEM_STATUS_FILTERS as $statusKey => $statusLabel): ?>
+                                <option value="<?= $statusKey ?>" <?= $status === $statusKey ? 'selected' : '' ?>><?= e($statusLabel) ?></option>
+                            <?php endforeach; ?>
+                        </select>
+                        <select class="filter-select" name="warehouse" onchange="this.form.submit()" title="Tồn kho, số lô và lọc tồn chỉ tính trong kho này">
+                            <option value="0">Tất cả kho</option>
+                            <?php foreach ($warehouses as $warehouse): ?>
+                                <option value="<?= (int) $warehouse['id'] ?>" <?= (int) $warehouse['id'] === $warehouseId ? 'selected' : '' ?>><?= e($warehouse['name']) ?></option>
+                            <?php endforeach; ?>
                         </select>
                         <div class="search-box">
                             <input type="text" name="q" value="<?= e($keyword) ?>" placeholder="Lọc theo mã / tên hàng...">
@@ -97,18 +114,18 @@ require __DIR__ . '/layout/header.php';
                             <?php if ($canManage): ?>
                                 <th style="width: 40px;"><input type="checkbox" id="selectAll"></th>
                             <?php endif; ?>
-                            <th>Mã Hàng</th>
-                            <th>Tên Mặt Hàng</th>
-                            <th>Đơn Vị Tính</th>
-                            <th>Số Lô Hiện Tại</th>
-                            <th class="text-right">Tổng Tồn</th>
+                            <?= sortHeader('Mã Hàng', 'sku', $sort) ?>
+                            <?= sortHeader('Tên Mặt Hàng', 'name', $sort) ?>
+                            <?= sortHeader('Đơn Vị Tính', 'unit', $sort) ?>
+                            <?= sortHeader('Số Lô Hiện Tại', 'batches', $sort, '', 'desc') ?>
+                            <?= sortHeader($warehouseId > 0 ? 'Tồn Tại Kho' : 'Tổng Tồn', 'total_qty', $sort, 'text-right', 'desc') ?>
                             <th style="text-align: center;">Thao Tác</th>
                         </tr>
                     </thead>
                     <tbody>
                         <?php if (empty($items)): ?>
                             <tr class="empty-row">
-                                <td colspan="7">Không có mặt hàng nào<?= $keyword !== '' ? ' khớp với "' . e($keyword) . '"' : '' ?>.</td>
+                                <td colspan="7">Không có mặt hàng nào<?= $keyword !== '' ? ' khớp với "' . e($keyword) . '"' : '' ?> (lọc: <?= e(mb_strtolower(ITEM_STATUS_FILTERS[$status])) ?>).</td>
                             </tr>
                         <?php else: ?>
                             <?php foreach ($items as $item): ?>
@@ -124,7 +141,7 @@ require __DIR__ . '/layout/header.php';
                                     </td>
                                     <td><?= e($item['unit']) ?></td>
                                     <td><?= $item['batch_list'] !== null ? e($item['batch_list']) : '<span style="color:#94a3b8">—</span>' ?></td>
-                                    <td class="text-right"><?= formatQty($item['total_qty']) ?></td>
+                                    <td class="text-right"><?= (float) $item['total_qty'] > 0 ? formatQty($item['total_qty']) : '<span class="badge badge-inactive">Hết hàng</span>' ?></td>
                                     <td class="row-actions">
                                         <a href="item_detail.php?id=<?= $itemId ?>" title="Xem chi tiết"><i class="fas fa-eye icon-view"></i></a>
                                         <?php if ($canManage): ?>

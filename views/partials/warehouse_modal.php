@@ -28,12 +28,14 @@ $modalIsEdit = ($modalValues['action'] ?? '') === 'update';
             <div class="form-grid">
                 <div class="form-group">
                     <label for="warehouseCode">Mã kho *</label>
-                    <input class="form-control" id="warehouseCode" name="code" data-field value="<?= e($modalValues['code'] ?? '') ?>" required maxlength="20"
+                    <input class="form-control" id="warehouseCode" name="code" data-field data-check="warehouses:code" value="<?= e($modalValues['code'] ?? '') ?>" required maxlength="20"
                            pattern="[A-Za-z0-9_\-]+" title="Chữ không dấu, số và _ -" placeholder="Vd: KHO-CT" style="text-transform: uppercase;">
+                    <small class="field-check" hidden></small>
                 </div>
                 <div class="form-group">
                     <label for="warehouseName">Tên kho *</label>
-                    <input class="form-control" id="warehouseName" name="name" data-field value="<?= e($modalValues['name'] ?? '') ?>" required maxlength="100" placeholder="Vd: Kho Cần Thơ">
+                    <input class="form-control" id="warehouseName" name="name" data-field data-check="warehouses:name" value="<?= e($modalValues['name'] ?? '') ?>" required maxlength="100" placeholder="Vd: Kho Cần Thơ">
+                    <small class="field-check" hidden></small>
                 </div>
                 <div class="form-group span-all">
                     <label for="warehouseAddress">Địa chỉ</label>

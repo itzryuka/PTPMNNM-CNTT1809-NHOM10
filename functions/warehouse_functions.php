@@ -1,14 +1,42 @@
 <?php
 // Các hàm truy vấn danh sách kho (kèm số mặt hàng / số lô đang tồn)
 
+// Bộ lọc "Tình trạng" của danh sách kho (giá trị ?status=...)
+const WAREHOUSE_STATUS_FILTERS = [
+    'all'      => 'Tất cả',
+    'active'   => 'Đang hoạt động',
+    'counting' => 'Đang kiểm kê (tạm khóa)',
+    'pending'  => 'Có phiếu chờ duyệt',
+    'empty'    => 'Kho trống',
+    'inactive' => 'Ngừng hoạt động',
+];
+
+// Cột sắp xếp được (khóa trên URL => biểu thức SQL)
+const WAREHOUSE_SORT_COLUMNS = [
+    'code'    => 'w.code',
+    'name'    => 'w.name',
+    'address' => 'w.address',
+    'items'   => 'item_count',
+    'batches' => 'batch_count',
+    'status'  => 'w.is_active',
+];
+
 /**
  * Điều kiện WHERE dùng chung cho đếm và lấy danh sách.
  * $allowedWarehouses: kho user được xem (null = tất cả kho) -> lọc ở server, không chỉ ẩn ở giao diện.
+ * $status: một khóa của WAREHOUSE_STATUS_FILTERS.
  * Trả về [chuỗi SQL, mảng tham số].
  */
-function buildWarehouseCondition(string $keyword, ?array $allowedWarehouses): array
+function buildWarehouseCondition(string $keyword, ?array $allowedWarehouses, string $status = 'all'): array
 {
-    $sql    = '1 = 1';
+    $sql = match ($status) {
+        'active'   => 'w.is_active = 1',
+        'inactive' => 'w.is_active = 0',
+        'counting' => "EXISTS (SELECT 1 FROM stock_counts sc WHERE sc.warehouse_id = w.id AND sc.status = 'COUNTING')",
+        'pending'  => "EXISTS (SELECT 1 FROM vouchers v WHERE v.status = 'PENDING' AND (v.warehouse_id = w.id OR v.to_warehouse_id = w.id))",
+        'empty'    => 'NOT EXISTS (SELECT 1 FROM stocks s WHERE s.warehouse_id = w.id AND s.quantity > 0)',
+        default    => '1 = 1',
+    };
     $params = [];
 
     if ($allowedWarehouses !== null) {
@@ -30,32 +58,38 @@ function buildWarehouseCondition(string $keyword, ?array $allowedWarehouses): ar
     return [$sql, $params];
 }
 
-function countWarehouses(PDO $pdo, string $keyword = '', ?array $allowedWarehouses = null): int
+function countWarehouses(PDO $pdo, string $keyword = '', ?array $allowedWarehouses = null, string $status = 'all'): int
 {
-    [$where, $params] = buildWarehouseCondition($keyword, $allowedWarehouses);
+    [$where, $params] = buildWarehouseCondition($keyword, $allowedWarehouses, $status);
     $stmt = $pdo->prepare("SELECT COUNT(*) FROM warehouses w WHERE $where");
     $stmt->execute($params);
     return (int) $stmt->fetchColumn();
 }
 
 /**
- * Lấy 1 trang kho, kèm số mặt hàng và số lô còn tồn (> 0) trong từng kho.
+ * Lấy 1 trang kho, kèm số mặt hàng và số lô còn tồn (> 0), số phiếu chờ duyệt và đợt kiểm kê đang mở của từng kho.
+ * $sort = [khóa WAREHOUSE_SORT_COLUMNS, 'asc'|'desc'].
  */
-function getWarehouses(PDO $pdo, string $keyword, int $limit, int $offset, ?array $allowedWarehouses = null): array
+function getWarehouses(PDO $pdo, string $keyword, int $limit, int $offset, ?array $allowedWarehouses = null,
+                       string $status = 'all', array $sort = ['code', 'asc']): array
 {
-    [$where, $params] = buildWarehouseCondition($keyword, $allowedWarehouses);
-    $limit  = max(1, $limit);
-    $offset = max(0, $offset);
+    [$where, $params] = buildWarehouseCondition($keyword, $allowedWarehouses, $status);
+    $orderBy = orderByClause(WAREHOUSE_SORT_COLUMNS, $sort, 'w.code');
+    $limit   = max(1, $limit);
+    $offset  = max(0, $offset);
 
     $sql = "
         SELECT w.id, w.code, w.name, w.address, w.is_active,
                COUNT(DISTINCT CASE WHEN s.quantity > 0 THEN s.item_id END)  AS item_count,
-               COUNT(DISTINCT CASE WHEN s.quantity > 0 THEN s.batch_id END) AS batch_count
+               COUNT(DISTINCT CASE WHEN s.quantity > 0 THEN s.batch_id END) AS batch_count,
+               (SELECT COUNT(*) FROM vouchers v
+                 WHERE v.status = 'PENDING' AND (v.warehouse_id = w.id OR v.to_warehouse_id = w.id)) AS pending_count,
+               (SELECT sc.code FROM stock_counts sc WHERE sc.warehouse_id = w.id AND sc.status = 'COUNTING' LIMIT 1) AS open_count_code
         FROM warehouses w
         LEFT JOIN stocks s ON s.warehouse_id = w.id
         WHERE $where
         GROUP BY w.id, w.code, w.name, w.address, w.is_active
-        ORDER BY w.code
+        ORDER BY $orderBy
         LIMIT $limit OFFSET $offset
     ";
 
@@ -109,7 +143,7 @@ function normalizeWarehouseInput(array $input): array
 {
     $warehouse = [
         'code'    => strtoupper(trim((string) ($input['code'] ?? ''))),
-        'name'    => trim((string) ($input['name'] ?? '')),
+        'name'    => normalizeName((string) ($input['name'] ?? '')),
         'address' => trim((string) ($input['address'] ?? '')),
     ];
     if (!preg_match('/^[A-Z0-9_-]{1,20}$/', $warehouse['code'])) {
@@ -134,12 +168,23 @@ function findWarehouseIdByCode(PDO $pdo, string $code): ?int
 }
 
 /**
- * Thêm kho. Người tạo và mọi tài khoản ADMIN được phân quyền kho mới ngay,
- * nếu không sẽ không ai thấy kho này (mọi danh sách đều lọc theo quyền kho).
+ * Tạo / xóa / mở lại kho là thay đổi cơ cấu doanh nghiệp: chỉ quản trị hệ thống.
+ * Quản lý kho chỉ sửa thông tin (tên, địa chỉ) các kho mình được giao.
+ */
+function assertWarehouseAdmin(array $user, string $action): void
+{
+    if (!isAdmin($user)) {
+        throw new AppException("Chỉ quản trị hệ thống mới được $action. Quản lý kho chỉ sửa thông tin các kho mình được giao.");
+    }
+}
+
+/**
+ * Thêm kho (chỉ quản trị). Người tạo và mọi tài khoản ADMIN được phân quyền kho mới ngay;
+ * quản lý / nhân viên của kho được giao sau ở trang Phân quyền.
  */
 function createWarehouse(PDO $pdo, array $user, array $input): int
 {
-    assertCatalogManager($user);
+    assertWarehouseAdmin($user, 'tạo kho mới');
     $warehouse = normalizeWarehouseInput($input);
     $pdo->beginTransaction();
     try {
@@ -152,12 +197,20 @@ function createWarehouse(PDO $pdo, array $user, array $input): int
     }
 }
 
+/** Mã trùng / gần giống, tên trùng (bỏ qua chính bản ghi đang sửa) -> AppException */
+function assertWarehouseUnique(PDO $pdo, array $warehouse, int $excludeId = 0): void
+{
+    $error = catalogCodeConflict($pdo, 'warehouses', $warehouse['code'], $excludeId)
+          ?? catalogNameConflict($pdo, 'warehouses', $warehouse['name'], $excludeId);
+    if ($error !== null) {
+        throw new AppException($error);
+    }
+}
+
 /** Ghi kho mới + phân quyền (gọi trong transaction) */
 function insertWarehouse(PDO $pdo, array $user, array $warehouse): int
 {
-    if (findWarehouseIdByCode($pdo, $warehouse['code']) !== null) {
-        throw new AppException("Mã kho {$warehouse['code']} đã tồn tại.");
-    }
+    assertWarehouseUnique($pdo, $warehouse);
     $stmt = $pdo->prepare('INSERT INTO warehouses (code, name, address) VALUES (?, ?, ?)');
     $stmt->execute([$warehouse['code'], $warehouse['name'], $warehouse['address']]);
     $warehouseId = (int) $pdo->lastInsertId();
@@ -177,10 +230,7 @@ function updateWarehouse(PDO $pdo, array $user, int $warehouseId, array $input):
         throw new AppException('Lỗi bảo mật: bạn không có quyền trên kho này.');
     }
     $warehouse = normalizeWarehouseInput($input);
-    $existing  = findWarehouseIdByCode($pdo, $warehouse['code']);
-    if ($existing !== null && $existing !== $warehouseId) {
-        throw new AppException("Mã kho {$warehouse['code']} đã được dùng cho kho khác.");
-    }
+    assertWarehouseUnique($pdo, $warehouse, $warehouseId);
     $stmt = $pdo->prepare('UPDATE warehouses SET code = ?, name = ?, address = ? WHERE id = ?');
     $stmt->execute([$warehouse['code'], $warehouse['name'], $warehouse['address'], $warehouseId]);
 }
@@ -192,7 +242,7 @@ function updateWarehouse(PDO $pdo, array $user, int $warehouseId, array $input):
  */
 function removeWarehouse(PDO $pdo, array $user, int $warehouseId): string
 {
-    assertCatalogManager($user);
+    assertWarehouseAdmin($user, 'xóa / ngừng hoạt động kho');
     if (!canAccessWarehouse($user, $warehouseId)) {
         throw new AppException('Lỗi bảo mật: bạn không có quyền trên kho này.');
     }
@@ -242,7 +292,7 @@ function removeWarehouse(PDO $pdo, array $user, int $warehouseId): string
 
 function restoreWarehouse(PDO $pdo, array $user, int $warehouseId): void
 {
-    assertCatalogManager($user);
+    assertWarehouseAdmin($user, 'mở lại kho');
     if (!canAccessWarehouse($user, $warehouseId)) {
         throw new AppException('Lỗi bảo mật: bạn không có quyền trên kho này.');
     }
@@ -256,20 +306,35 @@ function restoreWarehouse(PDO $pdo, array $user, int $warehouseId): void
 function importWarehouses(PDO $pdo, array $user, array $rows): array
 {
     assertCatalogManager($user);
-    $errors = [];
-    $valid  = [];
-    $seen   = [];
+    $errors   = [];
+    $valid    = [];
+    $seenCode = [];                                     // dạng rút gọn của mã -> dòng
+    $seenName = [];
     foreach ($rows as $line => $row) {
         try {
             $warehouse = normalizeWarehouseInput($row);
-            if (isset($seen[$warehouse['code']])) {
-                throw new AppException("trùng mã {$warehouse['code']} với dòng {$seen[$warehouse['code']]}");
+            $codeKey   = codeKey($warehouse['code']);
+            $nameKey   = mb_strtolower($warehouse['name']);
+            if (isset($seenCode[$codeKey])) {
+                throw new AppException("mã {$warehouse['code']} trùng hoặc gần giống mã ở dòng {$seenCode[$codeKey]}");
+            }
+            if (isset($seenName[$nameKey])) {
+                throw new AppException("tên \"{$warehouse['name']}\" trùng với dòng {$seenName[$nameKey]}");
             }
             $existing = findWarehouseIdByCode($pdo, $warehouse['code']);
             if ($existing !== null && !canAccessWarehouse($user, $existing)) {
                 throw new AppException("không có quyền sửa kho {$warehouse['code']}");
             }
-            $seen[$warehouse['code']] = $line;
+            if ($existing === null) {
+                if (!isAdmin($user)) {
+                    throw new AppException("mã {$warehouse['code']} chưa có: chỉ quản trị hệ thống mới được tạo kho mới");
+                }
+                assertWarehouseUnique($pdo, $warehouse);
+            } elseif (($error = catalogNameConflict($pdo, 'warehouses', $warehouse['name'], $existing)) !== null) {
+                throw new AppException($error);
+            }
+            $seenCode[$codeKey] = $line;
+            $seenName[$nameKey] = $line;
             $valid[$line] = $warehouse + ['id' => $existing];
         } catch (AppException $e) {
             $errors[] = "Dòng $line: " . $e->getMessage();

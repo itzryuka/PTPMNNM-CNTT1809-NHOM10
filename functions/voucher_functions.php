@@ -1,5 +1,6 @@
 <?php
-// Chứng từ kho: lập phiếu, duyệt (ghi sổ phát sinh + cập nhật tồn trong 1 transaction), từ chối
+// Chứng từ kho: lập phiếu, duyệt (nhập: đồng ý; xuất / điều chuyển: giữ chỗ hàng; điều chỉnh: ghi sổ ngay), từ chối.
+// Các bước sau khi duyệt (nhận hàng, xuất kho, gửi / nhận điều chuyển) nằm trong voucher_flow_functions.php
 
 /** Lỗi nghiệp vụ: thông báo hiển thị thẳng cho người dùng */
 class VoucherException extends AppException
@@ -7,6 +8,8 @@ class VoucherException extends AppException
 }
 
 const VOUCHER_PREFIX = ['IMPORT' => 'PN', 'EXPORT' => 'PX', 'TRANSFER' => 'PC', 'ADJUSTMENT' => 'DC'];
+
+require_once __DIR__ . '/voucher_flow_functions.php';
 
 // =====================================================================
 // TRA CỨU
@@ -49,15 +52,29 @@ function countVouchers(PDO $pdo, string $type, array $filters, array $allowedWar
     return (int) $stmt->fetchColumn();
 }
 
-function getVouchers(PDO $pdo, string $type, array $filters, array $allowedWarehouses, int $limit, int $offset): array
+// Cột sắp xếp được của danh sách phiếu (khóa trên URL => biểu thức SQL)
+const VOUCHER_SORT_COLUMNS = [
+    'date'      => 'v.voucher_date',
+    'code'      => 'v.code',
+    'warehouse' => 'w.name',
+    'lines'     => 'line_count',
+    'total_qty' => 'total_qty',
+    'creator'   => 'u.full_name',
+    'status'    => 'v.status',
+];
+
+/** $sort = [khóa VOUCHER_SORT_COLUMNS, 'asc'|'desc']; mặc định phiếu mới nhất trước */
+function getVouchers(PDO $pdo, string $type, array $filters, array $allowedWarehouses, int $limit, int $offset,
+                     array $sort = ['date', 'desc']): array
 {
     [$where, $params] = buildVoucherCondition($type, $filters, $allowedWarehouses);
-    $limit  = max(1, $limit);
-    $offset = max(0, $offset);
+    $orderBy = orderByClause(VOUCHER_SORT_COLUMNS, $sort, 'v.id DESC');
+    $limit   = max(1, $limit);
+    $offset  = max(0, $offset);
 
     $stmt = $pdo->prepare("
         SELECT v.id, v.code, v.status, v.voucher_date, v.reason,
-               w.code AS warehouse_code, w.name AS warehouse_name, tw.name AS to_warehouse_name,
+               w.code AS warehouse_code, w.name AS warehouse_name, tw.code AS to_warehouse_code, tw.name AS to_warehouse_name,
                u.full_name AS creator_name,
                COUNT(vl.id) AS line_count, COALESCE(SUM(vl.quantity), 0) AS total_qty
         FROM vouchers v
@@ -66,8 +83,8 @@ function getVouchers(PDO $pdo, string $type, array $filters, array $allowedWareh
         JOIN users u            ON u.id = v.created_by
         LEFT JOIN voucher_lines vl ON vl.voucher_id = v.id
         WHERE $where
-        GROUP BY v.id, v.code, v.status, v.voucher_date, v.reason, w.code, w.name, tw.name, u.full_name
-        ORDER BY v.voucher_date DESC, v.id DESC
+        GROUP BY v.id, v.code, v.status, v.voucher_date, v.reason, w.code, w.name, tw.code, tw.name, u.full_name
+        ORDER BY $orderBy
         LIMIT $limit OFFSET $offset
     ");
     $stmt->execute($params);
@@ -96,14 +113,16 @@ function getVoucher(PDO $pdo, int $voucherId): ?array
     return $stmt->fetch() ?: null;
 }
 
-/** Dòng chứng từ kèm tồn hiện tại của lô tại kho chính (để "kiểm tra" trước khi duyệt) */
+/** Dòng chứng từ kèm tiến độ và tồn hiện tại của lô tại kho chính (để "kiểm tra" trước khi duyệt) */
 function getVoucherLines(PDO $pdo, int $voucherId, int $warehouseId): array
 {
     $stmt = $pdo->prepare("
         SELECT vl.id, vl.item_id, vl.batch_id, vl.quantity, vl.note,
+               vl.received_qty, vl.damaged_qty, vl.shipped_qty, vl.lost_qty,
                i.sku, i.name AS item_name, i.unit,
                b.batch_no, b.expiry_date,
-               COALESCE(s.quantity, 0) AS current_qty
+               COALESCE(s.quantity, 0) AS current_qty, COALESCE(s.reserved, 0) AS reserved_qty,
+               COALESCE(s.quantity, 0) - COALESCE(s.reserved, 0) AS available_qty
         FROM voucher_lines vl
         JOIN items i   ON i.id = vl.item_id
         JOIN batches b ON b.id = vl.batch_id
@@ -119,10 +138,11 @@ function getVoucherLines(PDO $pdo, int $voucherId, int $warehouseId): array
 function getVoucherMovements(PDO $pdo, int $voucherId): array
 {
     $stmt = $pdo->prepare("
-        SELECT sm.id, sm.quantity, sm.moved_at,
-               w.code AS warehouse_code, i.sku, i.name AS item_name, i.unit, b.batch_no,
+        SELECT sm.id, sm.quantity, sm.moved_at, p.code AS posting_code, p.kind AS posting_kind,
+               w.code AS warehouse_code, w.name AS warehouse_name, w.is_transit, i.sku, i.name AS item_name, i.unit, b.batch_no,
                u.full_name AS created_by_name
         FROM stock_movements sm
+        JOIN voucher_postings p ON p.id = sm.posting_id
         JOIN warehouses w ON w.id = sm.warehouse_id
         JOIN items i      ON i.id = sm.item_id
         JOIN batches b    ON b.id = sm.batch_id
@@ -153,11 +173,11 @@ function getOpenStockCounts(PDO $pdo, array $warehouseIds, bool $lock = false): 
 
 // ----- Dữ liệu cho form lập phiếu -----
 
-/** $allowedWarehouses = null -> mọi kho đang hoạt động (vd chọn kho đến khi điều chuyển) */
+/** $allowedWarehouses = null -> mọi kho đang hoạt động (vd chọn kho đến khi điều chuyển). Không gồm kho trung chuyển. */
 function getWarehouseOptions(PDO $pdo, ?array $allowedWarehouses): array
 {
     [$whFilter, $whParams] = warehouseFilter('w.id', $allowedWarehouses);
-    $stmt = $pdo->prepare("SELECT w.id, w.code, w.name FROM warehouses w WHERE w.is_active = 1 AND $whFilter ORDER BY w.code");
+    $stmt = $pdo->prepare("SELECT w.id, w.code, w.name FROM warehouses w WHERE w.is_active = 1 AND w.is_transit = 0 AND $whFilter ORDER BY w.code");
     $stmt->execute($whParams);
     return $stmt->fetchAll();
 }
@@ -172,15 +192,18 @@ function getBatchOptions(PDO $pdo): array
     return $pdo->query('SELECT id, item_id, batch_no, expiry_date FROM batches ORDER BY item_id, expiry_date')->fetchAll();
 }
 
-/** Lô còn tồn tại các kho user được phép, hết hạn trước xếp trước (gợi ý xuất FEFO) */
+/**
+ * Lô còn hàng CÓ THỂ XUẤT (tồn - đang giữ cho phiếu đã duyệt) tại các kho user được phép,
+ * hết hạn trước xếp trước (gợi ý xuất FEFO). Cột quantity = số có thể xuất.
+ */
 function getStockOptions(PDO $pdo, array $allowedWarehouses): array
 {
     [$whFilter, $whParams] = warehouseFilter('s.warehouse_id', $allowedWarehouses);
     $stmt = $pdo->prepare("
-        SELECT s.warehouse_id, s.item_id, s.batch_id, s.quantity, b.batch_no, b.expiry_date
+        SELECT s.warehouse_id, s.item_id, s.batch_id, s.quantity - s.reserved AS quantity, b.batch_no, b.expiry_date
         FROM stocks s
         JOIN batches b ON b.id = s.batch_id
-        WHERE s.quantity > 0 AND $whFilter
+        WHERE s.quantity - s.reserved > 0 AND $whFilter
         ORDER BY s.warehouse_id, s.item_id, b.expiry_date, b.batch_no
     ");
     $stmt->execute($whParams);
@@ -233,9 +256,13 @@ function createVoucher(PDO $pdo, array $user, array $input): int
         return $existingId;
     }
 
-    $pdo->beginTransaction();
+    // Nhập nhiều phiếu từ file: hàm gọi đã mở transaction chung (tất cả hoặc không) -> không mở / chốt riêng
+    $ownTransaction = !$pdo->inTransaction();
+    if ($ownTransaction) {
+        $pdo->beginTransaction();
+    }
     try {
-        $stmt = $pdo->prepare('SELECT is_active FROM warehouses WHERE id = ?');
+        $stmt = $pdo->prepare('SELECT is_active = 1 AND is_transit = 0 FROM warehouses WHERE id = ?');
         foreach (array_filter([$warehouseId, $toWarehouseId]) as $id) {
             $stmt->execute([$id]);
             if ((int) $stmt->fetchColumn() !== 1) {
@@ -266,10 +293,10 @@ function createVoucher(PDO $pdo, array $user, array $input): int
                     if ($expiry !== null && $expiry < date('Y-m-d')) {
                         throw new VoucherException($label . 'lô đã hết hạn, không được xuất / điều chuyển.');
                     }
-                    // Kiểm tra sớm cho người lập. Kiểm tra QUYẾT ĐỊNH vẫn nằm ở bước duyệt (có khóa).
+                    // Kiểm tra sớm cho người lập. Kiểm tra QUYẾT ĐỊNH vẫn nằm ở bước duyệt (có khóa, giữ chỗ).
                     $available = getStockQty($pdo, $warehouseId, $line['item_id'], $line['batch_id']);
                     if (toMilli($available) < toMilli($line['quantity'])) {
-                        throw new VoucherException($label . 'không đủ tồn (còn ' . formatQty($available) . ').');
+                        throw new VoucherException($label . 'không đủ tồn có thể xuất (còn ' . formatQty($available) . ').');
                     }
                 }
             }
@@ -295,9 +322,14 @@ function createVoucher(PDO $pdo, array $user, array $input): int
             $stmt->execute([$voucherId, $line['item_id'], $line['batch_id'], $line['quantity']]);
         }
 
-        $pdo->commit();
+        if ($ownTransaction) {
+            $pdo->commit();
+        }
         return $voucherId;
     } catch (PDOException $e) {
+        if (!$ownTransaction) {
+            throw $e;
+        }
         $pdo->rollBack();
         // 2 request cùng token gửi đồng thời: request sau vi phạm UNIQUE(client_token) -> trả về phiếu của request trước
         if (($e->errorInfo[1] ?? 0) === 1062 && ($existingId = findVoucherByToken($pdo, $token)) !== null) {
@@ -305,7 +337,9 @@ function createVoucher(PDO $pdo, array $user, array $input): int
         }
         throw $e;
     } catch (Throwable $e) {
-        $pdo->rollBack();
+        if ($ownTransaction) {
+            $pdo->rollBack();
+        }
         throw $e;
     }
 }
@@ -399,7 +433,7 @@ function nextVoucherCode(PDO $pdo, string $type, string $voucherDate): string
  */
 function nextDocumentCode(PDO $pdo, string $table, string $prefix): string
 {
-    if (!in_array($table, ['vouchers', 'stock_counts'], true)) {
+    if (!in_array($table, ['vouchers', 'stock_counts', 'transfer_requests'], true)) {
         throw new InvalidArgumentException("Bảng không hợp lệ: $table");
     }
     $stmt = $pdo->prepare("SELECT code FROM $table WHERE code LIKE ? ORDER BY code DESC LIMIT 1 FOR UPDATE");
@@ -409,9 +443,10 @@ function nextDocumentCode(PDO $pdo, string $table, string $prefix): string
     return $prefix . sprintf('%04d', $next);
 }
 
+/** Số CÓ THỂ XUẤT của 1 lô tại kho = tồn - đang giữ cho phiếu đã duyệt */
 function getStockQty(PDO $pdo, int $warehouseId, int $itemId, int $batchId): string
 {
-    $stmt = $pdo->prepare('SELECT quantity FROM stocks WHERE warehouse_id = ? AND item_id = ? AND batch_id = ?');
+    $stmt = $pdo->prepare('SELECT quantity - reserved FROM stocks WHERE warehouse_id = ? AND item_id = ? AND batch_id = ?');
     $stmt->execute([$warehouseId, $itemId, $batchId]);
     $qty = $stmt->fetchColumn();
     return $qty === false ? '0' : (string) $qty;
@@ -428,85 +463,70 @@ function isValidDate(string $value): bool
 // =====================================================================
 
 /**
- * Duyệt chứng từ: ghi sổ phát sinh + cập nhật tồn, tất cả trong MỘT transaction.
- * Lỗi ở bất kỳ bước nào -> rollBack toàn bộ, CSDL như chưa có gì xảy ra.
+ * Duyệt chứng từ, trong MỘT transaction (lỗi ở bất kỳ bước nào -> rollBack toàn bộ):
+ *   IMPORT     : đồng ý nhập -> chờ hàng về (tồn chưa đổi; số thực nhận được ghi ở bước "Nhận hàng")
+ *   EXPORT     : GIỮ CHỖ hàng ở kho (có thể xuất giảm, tồn thực chưa đổi; trừ tồn ở bước "Đã xuất kho")
+ *   TRANSFER   : GIỮ CHỖ hàng ở kho đi (trừ tồn ở bước "Gửi hàng")
+ *   ADJUSTMENT : ghi sổ phát sinh + cập nhật tồn ngay (postVoucher)
  *
- *  1. Khóa phiếu (FOR UPDATE)        -> 2 người bấm duyệt cùng lúc: người sau chờ,
- *                                       rồi thấy phiếu đã APPROVED -> từ chối (không ghi đúp)
- *  2. Kiểm tra quyền + kho không đang kiểm kê
- *  3. Khóa từng dòng tồn (FOR UPDATE), theo thứ tự cố định -> 2 phiếu cùng xuất 1 lô:
- *                                       phiếu sau chờ, đọc lại tồn mới -> không đủ thì báo lỗi
- *  4. Ghi stock_movements + cập nhật stocks
- *  5. Đổi trạng thái APPROVED SAU CÙNG (trigger chỉ cho ghi sổ khi phiếu còn PENDING)
+ *  1. Khóa phiếu (FOR UPDATE)  -> 2 người bấm duyệt cùng lúc: người sau chờ, rồi thấy phiếu đã duyệt -> bị từ chối
+ *  2. Kiểm tra quyền (quản lý của kho chính) + kho không đang kiểm kê (với phiếu giữ hàng)
+ *  3. Khóa từng dòng tồn (FOR UPDATE) theo lô -> 2 phiếu cùng giữ 1 lô: phiếu sau chờ, đọc lại số đang giữ
+ *     mới -> không đủ "có thể xuất" thì bị từ chối. CHECK reserved <= quantity là lưới an toàn cuối.
+ *  4. Đổi trạng thái APPROVED sau cùng
  */
 function approveVoucher(PDO $pdo, array $user, int $voucherId): void
 {
-    $pdo->beginTransaction();
-    try {
-        postVoucher($pdo, $user, $voucherId);
-        $pdo->commit();
-    } catch (Throwable $e) {
-        $pdo->rollBack();
-        throw $e;
-    }
+    inTransaction($pdo, function () use ($pdo, $user, $voucherId) {
+        $voucher = lockVoucher($pdo, $voucherId);
+        if ($voucher['type'] === 'ADJUSTMENT') {
+            postVoucher($pdo, $user, $voucherId);
+            return;
+        }
+        if ($voucher['status'] !== 'PENDING') {
+            throw new VoucherException("Chứng từ {$voucher['code']} đã được xử lý trước đó ("
+                . voucherStatusLabel($voucher['status'], $voucher['type']) . '). Không duyệt / ghi nhận thêm lần nữa.');
+        }
+        assertCanDecide($user, [(int) $voucher['warehouse_id']]);
+        if (in_array($voucher['type'], ['EXPORT', 'TRANSFER'], true)) {
+            assertNotCounting($pdo, [(int) $voucher['warehouse_id']]);
+            reserveVoucherLines($pdo, $voucher, lockVoucherLines($pdo, $voucherId));
+        }
+        $stmt = $pdo->prepare("UPDATE vouchers SET status = 'APPROVED', approved_by = ?, approved_at = NOW() WHERE id = ?");
+        $stmt->execute([$user['id'], $voucherId]);
+    });
 }
 
 /**
- * Các bước 1-5 của approveVoucher. PHẢI được gọi bên trong 1 transaction đang mở
- * (approveVoucher, hoặc duyệt kiểm kê: sinh phiếu điều chỉnh + ghi sổ + chốt đợt trong cùng giao dịch).
+ * Ghi sổ phiếu điều chỉnh: 1 đợt ghi sổ ADJUST + phát sinh có dấu + cập nhật tồn, rồi APPROVED.
+ * PHẢI được gọi bên trong 1 transaction đang mở (approveVoucher, duyệt kiểm kê, xử lý hao hụt điều chuyển).
  * $countingCountId: đợt kiểm kê đang được chốt -> không tính là "kho đang kiểm kê" với chính phiếu điều chỉnh của nó.
+ * $checkAccess = false: phiếu hệ thống tự lập ở kho trung chuyển (không phân quyền cho ai).
  */
-function postVoucher(PDO $pdo, array $user, int $voucherId, ?int $countingCountId = null): void
+function postVoucher(PDO $pdo, array $user, int $voucherId, ?int $countingCountId = null, bool $checkAccess = true): void
 {
-    // 1. Khóa phiếu
-    $stmt = $pdo->prepare('SELECT id, code, type, status, warehouse_id, to_warehouse_id FROM vouchers WHERE id = ? FOR UPDATE');
-    $stmt->execute([$voucherId]);
-    $voucher = $stmt->fetch();
-    if (!$voucher) {
-        throw new VoucherException('Không tìm thấy chứng từ.');
-    }
+    $voucher = lockVoucher($pdo, $voucherId);
     if ($voucher['status'] !== 'PENDING') {
-        throw new VoucherException("Chứng từ {$voucher['code']} đã được xử lý trước đó ({$voucher['status']}). Không ghi nhận thêm lần nữa.");
+        throw new VoucherException("Chứng từ {$voucher['code']} đã được xử lý trước đó ("
+            . voucherStatusLabel($voucher['status'], $voucher['type']) . '). Không ghi nhận thêm lần nữa.');
     }
-
-    // 2. Quyền + đóng băng kho khi kiểm kê
-    $warehouseIds = array_values(array_filter([(int) $voucher['warehouse_id'], (int) $voucher['to_warehouse_id']]));
-    assertCanDecide($user, $warehouseIds);
-    assertNotCounting($pdo, $warehouseIds, $countingCountId);
-
-    // 3 + 4. Tính thay đổi tồn cho từng dòng, xử lý theo thứ tự (kho, lô) cố định
-    $stmt = $pdo->prepare('
-        SELECT vl.id, vl.item_id, vl.batch_id, vl.quantity, i.sku, b.batch_no
-        FROM voucher_lines vl
-        JOIN items i   ON i.id = vl.item_id
-        JOIN batches b ON b.id = vl.batch_id
-        WHERE vl.voucher_id = ?
-    ');
-    $stmt->execute([$voucherId]);
-    $changes = [];
-    foreach ($stmt->fetchAll() as $line) {
-        foreach (stockDeltas($voucher, $line['quantity']) as [$warehouseId, $delta]) {
-            $changes[] = $line + ['warehouse_id' => $warehouseId, 'delta' => $delta];
-        }
+    if ($voucher['type'] !== 'ADJUSTMENT') {
+        throw new LogicException('postVoucher chỉ dùng cho phiếu điều chỉnh.');
     }
-    if (empty($changes)) {
-        throw new VoucherException('Chứng từ không có dòng hàng nào.');
+    if ($checkAccess) {
+        assertCanDecide($user, [(int) $voucher['warehouse_id']]);
     }
-    usort($changes, fn ($a, $b) => [$a['warehouse_id'], $a['batch_id']] <=> [$b['warehouse_id'], $b['batch_id']]);
+    assertNotCounting($pdo, [(int) $voucher['warehouse_id']], $countingCountId);
+    $lines = lockVoucherLines($pdo, $voucherId);
 
-    $insertMovement = $pdo->prepare('
-        INSERT INTO stock_movements (voucher_id, voucher_line_id, warehouse_id, item_id, batch_id, quantity, moved_at, created_by)
-        VALUES (?, ?, ?, ?, ?, ?, NOW(), ?)
-    ');
-    foreach ($changes as $change) {
-        applyStockChange($pdo, $change);
-        $insertMovement->execute([
-            $voucherId, $change['id'], $change['warehouse_id'], $change['item_id'],
-            $change['batch_id'], $change['delta'], $user['id'],
-        ]);
+    $postingId = openPosting($pdo, $voucher, 'ADJUST', $user, null, null);
+    $changes   = [];
+    foreach ($lines as $line) {
+        addPostingLine($pdo, $postingId, (int) $line['id'], $line['quantity']);
+        $changes[] = [$line, (int) $voucher['warehouse_id'], $line['quantity'], '0'];
     }
+    applyStockChanges($pdo, $voucher, $postingId, $changes, $user);
 
-    // 5. Đánh dấu đã ghi nhận
     $stmt = $pdo->prepare("UPDATE vouchers SET status = 'APPROVED', approved_by = ?, approved_at = NOW() WHERE id = ?");
     $stmt->execute([$user['id'], $voucherId]);
 }
@@ -514,26 +534,15 @@ function postVoucher(PDO $pdo, array $user, int $voucherId, ?int $countingCountI
 /** Từ chối phiếu chờ duyệt: không phát sinh gì, phiếu bị khóa vĩnh viễn */
 function rejectVoucher(PDO $pdo, array $user, int $voucherId): void
 {
-    $pdo->beginTransaction();
-    try {
-        $stmt = $pdo->prepare('SELECT code, status, warehouse_id, to_warehouse_id FROM vouchers WHERE id = ? FOR UPDATE');
-        $stmt->execute([$voucherId]);
-        $voucher = $stmt->fetch();
-        if (!$voucher) {
-            throw new VoucherException('Không tìm thấy chứng từ.');
-        }
+    inTransaction($pdo, function () use ($pdo, $user, $voucherId) {
+        $voucher = lockVoucher($pdo, $voucherId);
         if ($voucher['status'] !== 'PENDING') {
-            throw new VoucherException("Chứng từ {$voucher['code']} đã được xử lý trước đó ({$voucher['status']}).");
+            throw new VoucherException("Chứng từ {$voucher['code']} đã được xử lý trước đó (" . voucherStatusLabel($voucher['status'], $voucher['type']) . ').');
         }
-        assertCanDecide($user, array_values(array_filter([(int) $voucher['warehouse_id'], (int) $voucher['to_warehouse_id']])));
-
+        assertCanDecide($user, [(int) $voucher['warehouse_id']]);
         $stmt = $pdo->prepare("UPDATE vouchers SET status = 'REJECTED', approved_by = ?, approved_at = NOW() WHERE id = ?");
         $stmt->execute([$user['id'], $voucherId]);
-        $pdo->commit();
-    } catch (Throwable $e) {
-        $pdo->rollBack();
-        throw $e;
-    }
+    });
 }
 
 function assertCanDecide(array $user, array $warehouseIds): void
@@ -548,61 +557,17 @@ function assertCanDecide(array $user, array $warehouseIds): void
     }
 }
 
-/** Kho đang kiểm kê thì không được phát sinh nhập / xuất (đóng băng tồn kho) */
+/** Kho đang kiểm kê thì không được làm thay đổi tồn / giữ hàng (đóng băng tồn kho) */
 function assertNotCounting(PDO $pdo, array $warehouseIds, ?int $exceptCountId = null): void
 {
-    // LOCK IN SHARE MODE: chặn việc mở đợt kiểm kê mới cho kho này cho tới khi duyệt xong
+    // LOCK IN SHARE MODE: chặn việc mở đợt kiểm kê mới cho kho này cho tới khi giao dịch xong
     $openCounts = array_filter(
         getOpenStockCounts($pdo, $warehouseIds, true),
         fn ($count) => (int) $count['id'] !== $exceptCountId
     );
     if (!empty($openCounts)) {
-        $openCounts = array_values($openCounts);
-        $count = $openCounts[0];
-        throw new VoucherException("Kho {$count['warehouse_code']} đang kiểm kê (đợt {$count['code']}), tạm thời không thể duyệt phiếu. Hãy chờ chốt kiểm kê.");
-    }
-}
-
-/**
- * Thay đổi tồn mà 1 dòng chứng từ gây ra: [[kho, số lượng có dấu], ...]
- *   IMPORT: +kho | EXPORT: -kho | TRANSFER: -kho đi, +kho đến | ADJUSTMENT: theo dấu của dòng
- */
-function stockDeltas(array $voucher, string $quantity): array
-{
-    $wh  = (int) $voucher['warehouse_id'];
-    $qty = (float) $quantity;
-    return match ($voucher['type']) {
-        'IMPORT'     => [[$wh, $qty]],
-        'EXPORT'     => [[$wh, -$qty]],
-        'TRANSFER'   => [[$wh, -$qty], [(int) $voucher['to_warehouse_id'], $qty]],
-        'ADJUSTMENT' => [[$wh, $qty]],
-    };
-}
-
-/** Cập nhật 1 dòng tồn. Giảm tồn: khóa dòng + kiểm tra đủ hàng trước. */
-function applyStockChange(PDO $pdo, array $change): void
-{
-    $key = [$change['warehouse_id'], $change['item_id'], $change['batch_id']];
-
-    if ($change['delta'] < 0) {
-        $stmt = $pdo->prepare('SELECT id, quantity FROM stocks WHERE warehouse_id = ? AND item_id = ? AND batch_id = ? FOR UPDATE');
-        $stmt->execute($key);
-        $row       = $stmt->fetch();
-        $available = $row ? $row['quantity'] : '0';
-        if (toMilli($available) < toMilli(-$change['delta'])) {
-            throw new VoucherException(sprintf(
-                'Không đủ tồn: %s - lô %s chỉ còn %s, chứng từ cần %s. Chứng từ chưa được ghi nhận.',
-                $change['sku'], $change['batch_no'], formatQty($available), formatQty(-$change['delta'])
-            ));
-        }
-        $stmt = $pdo->prepare('UPDATE stocks SET quantity = quantity + ? WHERE id = ?');
-        $stmt->execute([$change['delta'], $row['id']]);
-    } else {
-        $stmt = $pdo->prepare('
-            INSERT INTO stocks (warehouse_id, item_id, batch_id, quantity) VALUES (?, ?, ?, ?)
-            ON DUPLICATE KEY UPDATE quantity = quantity + VALUES(quantity)
-        ');
-        $stmt->execute([...$key, $change['delta']]);
+        $count = array_values($openCounts)[0];
+        throw new VoucherException("Kho {$count['warehouse_code']} đang kiểm kê (đợt {$count['code']}): tạm thời không nhận / xuất / gửi / giữ hàng được. Hãy chờ chốt kiểm kê.");
     }
 }
 

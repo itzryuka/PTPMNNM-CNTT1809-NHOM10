@@ -18,10 +18,11 @@ $username = trim((string) ($_POST['username'] ?? ''));
 $password = (string) ($_POST['password'] ?? '');
 
 try {
-    if ($username !== '' && attemptLogin(getDbConnection(), $username, $password)) {
+    $pdo = getDbConnection();
+    if ($username !== '' && attemptLogin($pdo, $username, $password)) {
         redirect('../index.php');
     }
-    setFlash('error', 'Sai tên đăng nhập hoặc mật khẩu.');
+    setFlash('error', isLockedAccount($pdo, $username, $password) ? LOCKED_ACCOUNT_MESSAGE : 'Sai tên đăng nhập hoặc mật khẩu.');
 } catch (PDOException $e) {
     setFlash('error', 'Không kết nối được CSDL: ' . $e->getMessage());
 }

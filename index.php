@@ -3,6 +3,7 @@
 require_once __DIR__ . '/functions/db_connection.php';
 require_once __DIR__ . '/functions/helpers.php';
 require_once __DIR__ . '/functions/auth.php';
+require_once __DIR__ . '/functions/voucher_functions.php';   // OVERDUE_TRANSIT_DAYS, nhãn trạng thái
 require_once __DIR__ . '/functions/dashboard_functions.php';
 
 $user = requireLogin('');
@@ -10,7 +11,8 @@ $user = requireLogin('');
 // Kho user được phân quyền (requireLogin đọc lại từ CSDL ở mỗi request)
 $allowedWarehouses = $user['warehouses'];
 
-$stats          = ['warehouses' => 0, 'items' => 0, 'pending' => 0, 'movements' => 0];
+$stats          = ['warehouses' => 0, 'items' => 0, 'pending' => 0, 'requests' => 0, 'in_transit' => 0, 'overdue' => 0];
+$overdue        = [];
 $recentVouchers = [];
 $expiring       = [];
 $reconTotal     = 0;
@@ -19,6 +21,7 @@ $dbError        = '';
 try {
     $pdo            = getDbConnection();
     $stats          = getDashboardStats($pdo, $allowedWarehouses);
+    $overdue        = getOverdueTransfers($pdo, $allowedWarehouses);
     $recentVouchers = getRecentVouchers($pdo, $allowedWarehouses);
     $expiring       = getExpiringBatches($pdo, $allowedWarehouses);
     [$reconTotal, $reconMismatch] = getReconciliationSummary($pdo, $allowedWarehouses);
@@ -31,6 +34,18 @@ $basePath   = '';
 $activeMenu = 'dashboard';
 require __DIR__ . '/views/layout/header.php';
 ?>
+
+            <!-- CẢNH BÁO: ĐIỀU CHUYỂN QUÁ HẠN NHẬN -->
+            <?php if ($overdue): ?>
+                <div class="alert-warning">
+                    <i class="fas fa-truck"></i>
+                    <strong><?= count($overdue) ?> phiếu điều chuyển đi đường quá <?= OVERDUE_TRANSIT_DAYS ?> ngày chưa nhận đủ:</strong>
+                    <?php foreach ($overdue as $n => $transfer): ?>
+                        <?= $n ? ' · ' : '' ?><a class="link-strong" href="views/voucher_detail.php?id=<?= (int) $transfer['id'] ?>"><?= e($transfer['code']) ?></a>
+                        (<?= e($transfer['from_name']) ?> → <?= e($transfer['to_name']) ?>, <?= (int) $transfer['days_on_road'] ?> ngày)
+                    <?php endforeach; ?>
+                </div>
+            <?php endif; ?>
 
             <!-- CHỈ SỐ NHANH -->
             <div class="stat-grid">
@@ -48,20 +63,20 @@ require __DIR__ . '/views/layout/header.php';
                         <div class="stat-value"><?= $stats['items'] ?></div>
                     </div>
                 </a>
-                <div class="stat-card">
+                <a class="stat-card" href="views/transfer_request_list.php?direction=incoming&amp;status=PENDING">
                     <div class="stat-icon amber"><i class="fas fa-hourglass-half"></i></div>
                     <div>
-                        <div class="stat-label">Phiếu chờ duyệt</div>
-                        <div class="stat-value"><?= $stats['pending'] ?></div>
+                        <div class="stat-label">Phiếu chờ duyệt · yêu cầu chờ xử lý</div>
+                        <div class="stat-value"><?= $stats['pending'] ?> · <?= $stats['requests'] ?></div>
                     </div>
-                </div>
-                <div class="stat-card">
-                    <div class="stat-icon slate"><i class="fas fa-exchange-alt"></i></div>
+                </a>
+                <a class="stat-card" href="views/report_stock.php">
+                    <div class="stat-icon slate"><i class="fas fa-truck"></i></div>
                     <div>
-                        <div class="stat-label">Phát sinh 30 ngày qua</div>
-                        <div class="stat-value"><?= $stats['movements'] ?></div>
+                        <div class="stat-label">Điều chuyển đang đi đường<?= $stats['overdue'] ? ' (' . $stats['overdue'] . ' quá hạn)' : '' ?></div>
+                        <div class="stat-value"><?= $stats['in_transit'] ?></div>
                     </div>
-                </div>
+                </a>
             </div>
 
             <div class="dash-grid">
@@ -98,7 +113,7 @@ require __DIR__ . '/views/layout/header.php';
                                         </td>
                                         <td><?= formatDate($voucher['voucher_date']) ?></td>
                                         <td class="text-right"><?= (int) $voucher['line_count'] ?></td>
-                                        <td><?= voucherStatusBadge($voucher['status']) ?></td>
+                                        <td><?= voucherStatusBadge($voucher['status'], $voucher['type']) ?></td>
                                     </tr>
                                 <?php endforeach; ?>
                             </tbody>
@@ -155,16 +170,17 @@ require __DIR__ . '/views/layout/header.php';
                     <div class="recon-banner ok">
                         <i class="fas fa-check-circle"></i>
                         <div>
-                            <strong>Tồn kho khớp sổ phát sinh.</strong>
-                            Cả <?= $reconTotal ?> dòng tồn (kho × lô) đều bằng tổng các phát sinh đã ghi nhận.
+                            <strong>Sổ sách khớp.</strong>
+                            Cả <?= $reconTotal ?> dòng kiểm tra đều đạt: tồn = sổ phát sinh, hàng đang giữ = phiếu đã duyệt, hàng đang đi đường = phiếu chưa nhận.
+                            <a class="link-strong" href="views/report_reconciliation.php">Xem đối chiếu</a>
                         </div>
                     </div>
                 <?php else: ?>
                     <div class="recon-banner bad">
                         <i class="fas fa-exclamation-circle"></i>
                         <div>
-                            <strong>Phát hiện <?= $reconMismatch ?> / <?= $reconTotal ?> dòng tồn lệch sổ phát sinh.</strong>
-                            Kiểm tra view <code>v_stock_reconciliation</code> (is_matched = 0).
+                            <strong>Phát hiện <?= $reconMismatch ?> / <?= $reconTotal ?> dòng lệch sổ.</strong>
+                            <a class="link-strong" href="views/report_reconciliation.php">Xem chi tiết ở trang Đối chiếu sổ</a>.
                         </div>
                     </div>
                 <?php endif; ?>
