@@ -229,8 +229,8 @@ require __DIR__ . '/layout/header.php';
                                         <tr>
                                             <td><?= e($line['sku'] . ' - ' . $line['item_name']) ?><br><span class="muted">Lô <?= e($line['batch_no']) ?></span></td>
                                             <td class="text-right"><?= $qtyUnit($waiting, $line) ?></td>
-                                            <td class="text-right"><input class="form-control qty-input" type="number" min="0" step="0.001" max="<?= plainQty($waiting) ?>" name="lines[<?= (int) $line['id'] ?>][good]" value="<?= plainQty($waiting) ?>" aria-label="Nhận tốt <?= e($line['sku']) ?>"></td>
-                                            <td class="text-right"><input class="form-control qty-input" type="number" min="0" step="0.001" name="lines[<?= (int) $line['id'] ?>][damaged]" value="0" aria-label="Hỏng <?= e($line['sku']) ?>"></td>
+                                            <td class="text-right"><input class="form-control qty-input" type="number" min="0" step="any" max="<?= plainQty($waiting) ?>" name="lines[<?= (int) $line['id'] ?>][good]" value="<?= plainQty($waiting) ?>" aria-label="Nhận tốt <?= e($line['sku']) ?>"></td>
+                                            <td class="text-right"><input class="form-control qty-input" type="number" min="0" step="any" name="lines[<?= (int) $line['id'] ?>][damaged]" value="0" aria-label="Hỏng <?= e($line['sku']) ?>"></td>
                                         </tr>
                                     <?php endforeach; ?>
                                 </tbody>
@@ -262,7 +262,7 @@ require __DIR__ . '/layout/header.php';
                                         <tr>
                                             <td><?= e($line['sku'] . ' - ' . $line['item_name']) ?><br><span class="muted">Lô <?= e($line['batch_no']) ?></span></td>
                                             <td class="text-right"><?= $qtyUnit($onRoad, $line) ?></td>
-                                            <td class="text-right"><input class="form-control qty-input" type="number" min="0" step="0.001" max="<?= plainQty($onRoad) ?>" name="lines[<?= (int) $line['id'] ?>]" value="<?= plainQty($onRoad) ?>" aria-label="Thực nhận <?= e($line['sku']) ?>"></td>
+                                            <td class="text-right"><input class="form-control qty-input" type="number" min="0" step="any" max="<?= plainQty($onRoad) ?>" name="lines[<?= (int) $line['id'] ?>]" value="<?= plainQty($onRoad) ?>" aria-label="Thực nhận <?= e($line['sku']) ?>"></td>
                                         </tr>
                                     <?php endforeach; ?>
                                 </tbody>

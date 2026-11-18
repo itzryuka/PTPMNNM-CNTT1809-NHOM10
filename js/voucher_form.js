@@ -100,7 +100,7 @@
                     <label>Hạn SD *<input class="form-control js-new-exp" type="date" name="${name('new_expiry')}" required></label>
                 </div>` : ''}
             </td>
-            <td><input class="form-control js-qty" type="number" name="${name('quantity')}" min="0.001" step="0.001" required></td>
+            <td><input class="form-control js-qty" type="number" name="${name('quantity')}" min="0" step="any" required></td>
             <td class="js-unit muted"></td>
             <td><button type="button" class="icon-btn js-remove" title="Xóa dòng"><i class="fas fa-times"></i></button></td>`;
 

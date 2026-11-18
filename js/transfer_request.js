@@ -44,7 +44,7 @@
         tr.innerHTML = `
             <td class="js-no"></td>
             <td><select class="form-control js-item" name="lines[${n}][item_id]" required>${itemOptions(line.item_id)}</select></td>
-            <td><input class="form-control js-qty" type="number" name="lines[${n}][quantity]" min="0.001" step="0.001" required value="${escapeHtml(line.quantity ?? '')}"></td>
+            <td><input class="form-control js-qty" type="number" name="lines[${n}][quantity]" min="0" step="any" required value="${escapeHtml(line.quantity ?? '')}"></td>
             <td class="js-availability"></td>
             <td><button type="button" class="icon-btn js-remove" title="Xóa dòng"><i class="fas fa-trash-alt icon-delete"></i></button></td>`;
         body.appendChild(tr);

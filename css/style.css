@@ -824,7 +824,10 @@ body.login-page {
 .count-table .count-by .fa-lock { color: #64748b; font-size: 12px; }
 .count-table .js-save-line { white-space: nowrap; }
 .count-table tr.row-claimed { background: #eff6ff; }
+.count-table tr.row-saved { background: #f8fafc; }
 .count-table tr.row-mine { background: #f0fdf4; }
+.count-table .count-own { color: #15803d; }
+.count-table .count-own .fa-check-circle { font-size: 12px; }
 .count-table .count-claimed { color: #1d4ed8; }
 .count-table .count-mine { color: #15803d; }
 .count-table .count-claimed .fa-pen, .count-table .count-mine .fa-pen { font-size: 12px; }
