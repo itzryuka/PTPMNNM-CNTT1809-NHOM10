@@ -29,7 +29,7 @@ if [ -z "$DB_HOST" ]; then
 
     if ! mariadb -e "USE quanlykhohang" >/dev/null 2>&1; then
         echo "[omnistock] Nạp dữ liệu mẫu..."
-        mariadb < /opt/omnistock/quanlykhohang.sql
+        mariadb --default-character-set=utf8mb4 < /opt/omnistock/quanlykhohang.sql
     fi
 
     # Tài khoản riêng cho web, mật khẩu ngẫu nhiên mỗi lần khởi động (root chỉ đăng nhập qua socket nội bộ)

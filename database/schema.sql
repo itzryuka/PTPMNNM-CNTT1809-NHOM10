@@ -30,6 +30,9 @@
 --  quanlykhohang. Bỏ dòng đó nếu bạn đã có dữ liệu thật.
 -- =====================================================================
 
+-- File này chứa tiếng Việt UTF-8: báo cho client biết, nếu không client mặc định latin1 (vd. mariadb trên Linux) làm hỏng dấu
+SET NAMES utf8mb4;
+
 DROP DATABASE IF EXISTS quanlykhohang;
 CREATE DATABASE quanlykhohang
   CHARACTER SET utf8mb4
