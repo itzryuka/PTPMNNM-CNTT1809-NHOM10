@@ -20,6 +20,7 @@ $counts      = [];
 $warehouses  = [];
 $candidates  = [];
 $openByWh    = [];
+$openCounts  = [];
 $totalCounts = 0;
 $dbError     = '';
 try {
@@ -30,6 +31,7 @@ try {
     $totalPages  = max(1, (int) ceil($totalCounts / $pageSize));
     $page        = min($page, $totalPages);
     $counts      = getStockCounts($pdo, $filters, $user['warehouses'], $pageSize, ($page - 1) * $pageSize, $sort);
+    $openCounts  = getOpenStockCountsFor($pdo, $user);
     foreach (getOpenStockCounts($pdo, array_column($warehouses, 'id')) as $open) {
         $openByWh[$open['warehouse_code']] = $open['code'];
     }
@@ -44,6 +46,31 @@ $activeMenu = $filters['status'] === 'COUNTING' ? 'differences' : 'stock_counts'
 $extraScripts = ['js/stock_count.js'];
 require __DIR__ . '/layout/header.php';
 ?>
+
+            <?php if ($openCounts): ?>
+                <!-- ĐỢT ĐANG MỞ: vào nhập số / tham gia ngay, khỏi tìm trong bảng -->
+                <div class="open-counts">
+                    <?php foreach ($openCounts as $open): ?>
+                        <?php $joined = (bool) $open['is_member'] || isManager($user); ?>
+                        <div class="open-count-card">
+                            <div>
+                                <strong><i class="fas fa-clipboard-list"></i> <?= e($open['code']) ?> · <?= e($open['warehouse_name']) ?></strong>
+                                <div class="muted">Mở bởi <?= e($open['creator_name']) ?> lúc <?= e(date('H:i d/m/Y', strtotime($open['created_at']))) ?> · đã đếm <?= (int) $open['counted_count'] ?> / <?= (int) $open['line_count'] ?> dòng</div>
+                            </div>
+                            <?php if ($joined): ?>
+                                <a class="btn btn-primary" href="stock_count_detail.php?id=<?= (int) $open['id'] ?>"><i class="fas fa-pen"></i> Vào nhập số đếm</a>
+                            <?php else: ?>
+                                <form method="post" action="../handle/stock_count_process.php" data-lock>
+                                    <input type="hidden" name="csrf_token" value="<?= e(csrfToken()) ?>">
+                                    <input type="hidden" name="action" value="join">
+                                    <input type="hidden" name="id" value="<?= (int) $open['id'] ?>">
+                                    <button class="btn btn-primary" type="submit"><i class="fas fa-sign-in-alt"></i> Tham gia kiểm kê</button>
+                                </form>
+                            <?php endif; ?>
+                        </div>
+                    <?php endforeach; ?>
+                </div>
+            <?php endif; ?>
 
             <?php if (isManager($user) && $warehouses): ?>
                 <!-- MỞ ĐỢT KIỂM KÊ MỚI -->

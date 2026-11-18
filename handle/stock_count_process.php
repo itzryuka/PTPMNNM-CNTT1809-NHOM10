@@ -17,7 +17,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'GET' && ($_GET['action'] ?? '') === 'lines')
         http_response_code(404);
         exit(json_encode(['error' => 'Không tìm thấy đợt kiểm kê.'], JSON_UNESCAPED_UNICODE));
     }
-    exit(json_encode(['status' => $count['status'], 'lines' => getStockCountLineStates($pdo, (int) $count['id'])], JSON_UNESCAPED_UNICODE));
+    exit(json_encode(['status' => $count['status'], 'lines' => getStockCountLineStates($pdo, (int) $count['id'], (int) $user['id'])], JSON_UNESCAPED_UNICODE));
 }
 
 if ($_SERVER['REQUEST_METHOD'] !== 'POST') {
@@ -45,7 +45,7 @@ if ($action === 'save_line') {
         echo json_encode([
             'ok'      => !$result['conflicts'],
             'message' => $result['conflicts'][0] ?? 'Đã lưu và khóa dòng.',
-            'lines'   => getStockCountLineStates($pdo, $countId),
+            'lines'   => getStockCountLineStates($pdo, $countId, (int) $user['id']),
         ], JSON_UNESCAPED_UNICODE);
     } catch (VoucherException $e) {
         http_response_code(422);
@@ -58,9 +58,39 @@ if ($action === 'save_line') {
     exit;
 }
 
+// Giữ dòng khi bắt đầu gõ / nhả dòng (fetch, sendBeacon khi rời trang): trả JSON kèm trạng thái mọi dòng
+if ($action === 'claim_line' || $action === 'release_line') {
+    header('Content-Type: application/json; charset=utf-8');
+    try {
+        $pdo = getDbConnection();
+        if ($action === 'claim_line') {
+            $result = claimStockCountLine($pdo, $user, $countId, (int) ($_POST['line_id'] ?? 0));
+        } else {
+            $lineIds = is_array($_POST['line_ids'] ?? null) ? $_POST['line_ids'] : [(int) ($_POST['line_id'] ?? 0)];
+            releaseStockCountLines($pdo, $user, $countId, $lineIds);
+            $result = ['ok' => true, 'message' => ''];
+        }
+        http_response_code($result['ok'] ? 200 : 409);
+        echo json_encode($result + ['lines' => getStockCountLineStates($pdo, $countId, (int) $user['id'])], JSON_UNESCAPED_UNICODE);
+    } catch (VoucherException $e) {
+        http_response_code(422);
+        echo json_encode(['ok' => false, 'message' => $e->getMessage()], JSON_UNESCAPED_UNICODE);
+    } catch (PDOException $e) {
+        error_log('[stock_count_process] ' . $e->getMessage());
+        http_response_code(500);
+        echo json_encode(['ok' => false, 'message' => 'Lỗi CSDL, bạn thử lại.'], JSON_UNESCAPED_UNICODE);
+    }
+    exit;
+}
+
 try {
     $pdo = getDbConnection();
     switch ($action) {
+        case 'join':
+            $code = joinStockCount($pdo, $user, $countId);
+            setFlash('success', "Bạn đã tham gia đợt kiểm kê $code: gõ số đếm vào dòng nào thì dòng đó giữ cho bạn và tự lưu khi bạn chuyển sang dòng khác.");
+            redirect('../views/stock_count_detail.php?id=' . $countId);
+
         case 'create':
             $members = is_array($_POST['members'] ?? null) ? $_POST['members'] : [];
             $countId = createStockCount($pdo, $user, (int) ($_POST['warehouse_id'] ?? 0), (string) ($_POST['note'] ?? ''), $members);

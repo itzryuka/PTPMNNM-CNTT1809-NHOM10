@@ -395,11 +395,14 @@ CREATE TABLE stock_count_lines (
   reason       VARCHAR(255)  NULL,                  -- lý do chênh lệch (hỏng, thất lạc...)
   counted_by   INT UNSIGNED  NULL,
   counted_at   DATETIME      NULL,
+  claimed_by   INT UNSIGNED  NULL,                  -- người đang gõ dòng này (giữ dòng, chưa lưu)
+  claimed_at   DATETIME      NULL,                  -- lần cuối báo "còn đang gõ"; quá hạn thì dòng tự nhả
   UNIQUE KEY uq_scl (count_id, item_id, batch_id),
   CONSTRAINT fk_scl_count FOREIGN KEY (count_id)          REFERENCES stock_counts(id) ON DELETE CASCADE,
   CONSTRAINT fk_scl_item  FOREIGN KEY (item_id)           REFERENCES items(id),
   CONSTRAINT fk_scl_batch FOREIGN KEY (batch_id, item_id) REFERENCES batches(id, item_id),
   CONSTRAINT fk_scl_user  FOREIGN KEY (counted_by)        REFERENCES users(id),
+  CONSTRAINT fk_scl_claim FOREIGN KEY (claimed_by)        REFERENCES users(id),
   CONSTRAINT ck_scl_counted CHECK (counted_qty IS NULL OR counted_qty >= 0)
 ) ENGINE=InnoDB;
 

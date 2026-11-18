@@ -9,7 +9,8 @@ require_once __DIR__ . '/../functions/report_functions.php';
 $user = requireLogin('../');
 
 if (!isset($_GET['from'])) {
-    $_GET['from'] = date('Y-01-01');
+    $_GET['from'] = date('Y-01-01');                   // mặc định: từ đầu năm (kiểm kê thường theo tháng / quý)
+}
 [$from, $to] = readDateRange();
 $filters = ['warehouse_id' => (int) ($_GET['warehouse'] ?? 0), 'from' => $from, 'to' => $to];
 

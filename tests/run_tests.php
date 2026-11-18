@@ -580,11 +580,46 @@ try {
         str_contains(errorOf(fn () => saveStockCountEntries($pdo, $staffB, $cleanId, $firstLine)), 'không có trong danh sách'));
     check('Nhân viên không đổi được danh sách kiểm kê',
         str_contains(errorOf(fn () => updateStockCountMembers($pdo, $staffB, $cleanId, [$staffB['id']])), 'Chỉ quản lý'));
+    $firstLineId = (int) array_key_first($firstLine);
+    check('Chưa tham gia đợt thì không giữ dòng được', str_contains(errorOf(fn () => claimStockCountLine($pdo, $staffB, $cleanId, $firstLineId)), 'chưa tham gia'));
+    $openForB = array_column(getOpenStockCountsFor($pdo, $staffB), null, 'id');
+    check('Trang danh sách hiện đợt đang mở của kho mình, chưa tham gia', isset($openForB[$cleanId]) && !(int) $openForB[$cleanId]['is_member']);
+    check('Nhân viên kho khác không tự tham gia được', str_contains(errorOf(fn () => joinStockCount($pdo, $staffA, $cleanId)), 'không có quyền'));
+    joinStockCount($pdo, $staffB, $cleanId);
+    check('Nhân viên của kho tự tham gia đợt đang mở', in_array((int) $staffB['id'], getStockCountMemberIds($pdo, $cleanId), true)
+        && (int) array_column(getOpenStockCountsFor($pdo, $staffB), null, 'id')[$cleanId]['is_member'] === 1);
     updateStockCountMembers($pdo, $manager, $cleanId, [$staffB['id']]);
     check('Quản lý thêm nhân viên vào đợt (bỏ người cũ): nhân viên nhập được',
         getStockCountMemberIds($pdo, $cleanId) === [(int) $staffB['id']] && saveStockCountEntries($pdo, $staffB, $cleanId, $firstLine)['saved'] === 1);
     check('Danh sách nhân viên kèm số dòng mỗi người đã đếm', (int) getStockCountMembers($pdo, $cleanId)[0]['counted_lines'] === 1);
-    check('Quản lý kho không cần có tên trong đợt vẫn đếm được', saveStockCountEntries($pdo, $manager, $cleanId, $cleanEntries)['saved'] === count($cleanEntries) - 1);
+
+    // Giữ dòng khi đang gõ: ai gõ trước thì dòng thuộc người đó, người khác không giữ / lưu được
+    $claimLine  = (int) array_keys($cleanEntries)[1];
+    $claimEntry = [$claimLine => $cleanEntries[$claimLine]];
+    check('Gõ trước: giữ được dòng', claimStockCountLine($pdo, $staffB, $cleanId, $claimLine)['ok'] === true);
+    $other = claimStockCountLine($pdo, $manager, $cleanId, $claimLine);
+    check('Người khác không giữ được dòng đang có người gõ, biết ai đang gõ', !$other['ok'] && str_contains($other['message'], $staffB['full_name']));
+    $states = getStockCountLineStates($pdo, $cleanId, (int) $manager['id']);
+    check('Trang người khác thấy tên người đang gõ; trang người gõ biết là dòng của mình',
+        $states[$claimLine]['claim'] === $staffB['full_name'] && !$states[$claimLine]['mine']
+        && getStockCountLineStates($pdo, $cleanId, (int) $staffB['id'])[$claimLine]['mine']);
+    $saved = saveStockCountEntries($pdo, $manager, $cleanId, $claimEntry);
+    check('Lưu dòng người khác đang gõ: không ghi, báo ai đang nhập',
+        $saved['saved'] === 0 && str_contains($saved['conflicts'][0] ?? '', 'đang được') && scalar('SELECT counted_qty FROM stock_count_lines WHERE id = ?', [$claimLine]) === null);
+    releaseStockCountLines($pdo, $staffB, $cleanId, [$claimLine]);
+    check('Người gõ nhả dòng (xóa số / rời trang): người khác giữ được', claimStockCountLine($pdo, $manager, $cleanId, $claimLine)['ok'] === true);
+    check('Người không giữ dòng thì không nhả hộ được',
+        (releaseStockCountLines($pdo, $staffB, $cleanId, [$claimLine]) ?? true) && (int) scalar('SELECT claimed_by FROM stock_count_lines WHERE id = ?', [$claimLine]) === (int) $manager['id']);
+    $pdo->prepare('UPDATE stock_count_lines SET claimed_at = NOW() - INTERVAL ' . (STOCK_COUNT_CLAIM_SECONDS + 5) . ' SECOND WHERE id = ?')->execute([$claimLine]);
+    check('Giữ dòng quá hạn (đóng trang, mất mạng): dòng tự nhả cho người khác',
+        getStockCountLineStates($pdo, $cleanId)[$claimLine]['claim'] === null && claimStockCountLine($pdo, $staffB, $cleanId, $claimLine)['ok'] === true);
+    check('Người đang giữ lưu được: dòng khóa, hết giữ', saveStockCountEntries($pdo, $staffB, $cleanId, $claimEntry)['saved'] === 1
+        && scalar('SELECT claimed_by FROM stock_count_lines WHERE id = ?', [$claimLine]) === null);
+    $late = claimStockCountLine($pdo, $manager, $cleanId, $claimLine);
+    check('Dòng đã lưu thì không giữ được nữa, báo ai đã nhập', !$late['ok'] && str_contains($late['message'], 'đã được'));
+
+    check('Quản lý kho không cần có tên trong đợt vẫn đếm được', saveStockCountEntries($pdo, $manager, $cleanId, $cleanEntries)['saved'] === count($cleanEntries) - 2);
+    check('Quản lý nhập giúp thì tự có tên trong danh sách người đếm', in_array((int) $manager['id'], getStockCountMemberIds($pdo, $cleanId), true));
     $before = movementCount();
     check('Không có chênh lệch: duyệt không sinh phiếu điều chỉnh', approveStockCount($pdo, $manager, $cleanId, 'Khớp') === null && movementCount() === $before);
 
