@@ -1,4 +1,4 @@
-// Kiểm kê: chọn nhân viên khi mở đợt; trang chi tiết lưu & khóa từng dòng ngay khi nhập, hiện tên người nhập, tự cập nhật dòng người khác vừa nhập.
+// Kiểm kê: chọn nhân viên khi mở đợt; trang chi tiết giữ dòng ngay khi gõ, tự lưu & khóa khi rời dòng, hiện tên người đang nhập / đã nhập.
 // Chỉ là tiện ích giao diện: server kiểm tra quyền, khóa dòng, tính lại chênh lệch và lý do.
 // Chọn nhân viên đi kiểm kê (form mở đợt + form đổi danh sách): chỉ hiện người của kho đang chọn, bắt chọn ít nhất 1 người
 document.querySelectorAll('.js-member-grid').forEach(grid => {
@@ -32,11 +32,14 @@ document.querySelectorAll('.js-member-grid').forEach(grid => {
     filter();
 });
 
+
+// Trang chi tiết: gõ số vào dòng nào thì GIỮ dòng đó cho mình ngay (người khác thấy tên và không nhập được),
+// chuyển sang dòng khác / Enter thì tự lưu và khóa. Server là chốt chặn cuối cho mọi bước (giữ dòng, lưu, khóa).
 (function () {
     const form = document.getElementById('countForm');
     if (!form) return;
 
-    const rows = form.querySelectorAll('.js-count-row');
+    const rows = [...form.querySelectorAll('.js-count-row')];
     const hint = document.getElementById('dirtyHint');
     const progress = document.getElementById('countProgress');
     const pollUrl = form.dataset.poll;
@@ -44,7 +47,13 @@ document.querySelectorAll('.js-member-grid').forEach(grid => {
     const csrf = form.querySelector('[name="csrf_token"]').value;
     const countId = form.querySelector('[name="id"]').value;
     const endpoint = form.getAttribute('action');
+    const HEARTBEAT_MS = 15000;                              // báo "còn đang gõ" (server giữ dòng 45 giây)
+    const mine = new Set();                                  // các dòng mình đang giữ
+    const claiming = new Map();                              // dòng đang gửi yêu cầu giữ -> Promise
     let unlockedNotice = false;
+
+    const qtyInput = row => row.querySelector('.js-counted');
+    const reasonInput = row => row.querySelector('.js-reason');
 
     function formatQty(qty) {
         return Math.abs(qty).toLocaleString('vi-VN', { maximumFractionDigits: 3 });
@@ -54,19 +63,22 @@ document.querySelectorAll('.js-member-grid').forEach(grid => {
         return String(text ?? '').replace(/[&<>"']/g, ch => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[ch]));
     }
 
-    // Còn dòng đã gõ số mà chưa bấm "Lưu & khóa"?
-    function hasUnsaved() {
-        return [...form.querySelectorAll('.js-counted')].some(input => input.value !== '');
-    }
-
     function setHint(text) {
         if (hint) hint.textContent = text;
     }
 
+    // Còn dòng đã gõ số mà chưa lưu được (vd. thiếu lý do chênh lệch)?
+    function hasUnsaved() {
+        return rows.some(row => {
+            const input = qtyInput(row);
+            return input && !input.disabled && input.value !== '';
+        });
+    }
+
     // Chênh lệch tính ngay khi gõ (server tính lại khi lưu); trả về chênh lệch theo phần nghìn
     function refresh(row) {
-        const input = row.querySelector('.js-counted');
-        const reason = row.querySelector('.js-reason');
+        const input = qtyInput(row);
+        const reason = reasonInput(row);
         const cell = row.querySelector('.js-diff');
         if (!input) return 0;
 
@@ -89,14 +101,55 @@ document.querySelectorAll('.js-member-grid').forEach(grid => {
         return diff;
     }
 
+    function setCounter(row, html) {
+        row.querySelector('.js-counter').innerHTML = html;
+    }
+
     function showRowError(row, message) {
         row.querySelector('.count-conflict')?.remove();
         row.querySelector('.js-counter').insertAdjacentHTML('beforeend', `<span class="count-conflict">${escapeHtml(message)}</span>`);
     }
 
-    // Dòng đã có người nhập: hiện số, chênh lệch, lý do và tên người nhập ngay tại dòng; không còn ô nhập
+    function clearInputs(row) {
+        const input = qtyInput(row);
+        if (!input) return;
+        input.value = '';
+        reasonInput(row).value = '';
+        refresh(row);
+    }
+
+    // Mình đang giữ dòng: hiện "Bạn đang nhập" + nút lưu ngay (không bắt buộc: rời dòng là tự lưu)
+    function showMine(row) {
+        const error = row.querySelector('.count-conflict');      // giữ thông báo đang hiện (vd. thiếu lý do)
+        row.classList.add('row-mine');
+        row.classList.remove('row-claimed');
+        setCounter(row, `<span class="count-by count-mine"><i class="fas fa-pen"></i> <strong>Bạn</strong> đang nhập</span>
+            <button class="icon-btn js-save-line" type="button" title="Lưu ngay (hoặc Enter / chuyển sang dòng khác)"><i class="fas fa-check icon-view"></i></button>`);
+        if (error) row.querySelector('.js-counter').append(error);
+    }
+
+    function showIdle(row) {
+        row.classList.remove('row-mine', 'row-claimed');
+        row.querySelectorAll('input').forEach(input => { input.disabled = false; });
+        const input = qtyInput(row);
+        if (input) input.placeholder = 'Chưa đếm';
+        setCounter(row, '<span class="muted">—</span>');
+    }
+
+    // Người khác đang gõ dòng này: khóa ô nhập của mình, hiện tên người đó
+    function showClaimed(row, name) {
+        row.classList.add('row-claimed');
+        row.classList.remove('row-mine');
+        row.querySelectorAll('input').forEach(input => { input.disabled = true; });
+        const input = qtyInput(row);
+        if (input) input.placeholder = 'Người khác đang nhập';
+        setCounter(row, `<span class="count-by count-claimed"><i class="fas fa-pen"></i> <strong>${escapeHtml(name)}</strong> đang nhập…</span>`);
+    }
+
+    // Dòng đã lưu: hiện số, chênh lệch, lý do và tên người nhập ngay tại dòng; không còn ô nhập
     function lockRow(row, state) {
         const cells = row.children;
+        mine.delete(row.dataset.line);
         cells[4].innerHTML = `<i class="fas fa-lock muted" title="Đã khóa"></i> ${escapeHtml(state.qty)}`;
         row.querySelector('.js-diff').innerHTML = state.diff;
         cells[6].innerHTML = state.reason ? escapeHtml(state.reason) : '<span class="muted">—</span>';
@@ -107,12 +160,12 @@ document.querySelectorAll('.js-member-grid').forEach(grid => {
                 data-confirm-title="Mở khóa dòng" data-confirm-ok="Mở khóa"
                 data-confirm="${escapeHtml(`Mở khóa dòng ${name}? Số đếm của ${state.by} bị xóa để đếm lại.`)}"><i class="fas fa-lock-open icon-edit"></i></button>`;
         }
-        row.querySelector('.js-counter').innerHTML = counter;
-        row.classList.remove('has-diff', 'row-conflict');
+        setCounter(row, counter);
+        row.classList.remove('has-diff', 'row-conflict', 'row-mine', 'row-claimed');
         row.classList.add('row-locked');
     }
 
-    // Áp trạng thái mới nhất từ server cho mọi dòng (sau khi lưu 1 dòng, hoặc mỗi lần hỏi định kỳ)
+    // Áp trạng thái mới nhất từ server cho mọi dòng (sau mỗi thao tác, hoặc mỗi lần hỏi định kỳ)
     function applyStates(lines) {
         let counted = 0;
         let mismatched = 0;
@@ -121,75 +174,129 @@ document.querySelectorAll('.js-member-grid').forEach(grid => {
             if (!state) return;
             if (state.counted) counted++;
             if (state.mismatch) mismatched++;
-            const input = row.querySelector('.js-counted');
+            const input = qtyInput(row);
             const locked = row.classList.contains('row-locked');
-            if (state.counted && !locked) {
-                if (!input || input.value === '') {
-                    lockRow(row, state);                     // người chỉ xem (không có ô nhập) cũng thấy dòng vừa nhập
+
+            if (state.counted) {
+                if (locked) return;
+                if (!input || input.value === '' || row.dataset.saving) {
+                    lockRow(row, state);
                 } else if (!row.classList.contains('row-conflict')) {
-                    // Mình đang gõ dở dòng này mà người khác đã lưu trước -> báo, số của mình sẽ không được ghi
+                    // Hiếm: mình mất quyền giữ (vd. máy ngủ quá lâu) và người khác đã lưu -> báo, số của mình không được ghi
                     row.classList.add('row-conflict');
-                    showRowError(row, `${state.by} vừa nhập ${state.qty}: số của bạn sẽ không được ghi. Xóa số của bạn để xem.`);
+                    showRowError(row, `${state.by} đã nhập ${state.qty}: số của bạn không được ghi. Xóa số của bạn để xem.`);
                 }
-            } else if (!state.counted && locked && !unlockedNotice) {
-                unlockedNotice = true;
-                setHint('Quản lý vừa mở khóa dòng để đếm lại: tải lại trang để nhập lại dòng đó.');
+            } else if (locked) {
+                if (!unlockedNotice) {
+                    unlockedNotice = true;
+                    setHint('Quản lý vừa mở khóa dòng để đếm lại: tải lại trang để nhập lại dòng đó.');
+                }
+            } else if (state.claim && !state.mine) {
+                if (row.classList.contains('row-claimed')) {
+                    row.querySelector('.count-claimed strong').textContent = state.claim;
+                    return;
+                }
+                const lost = input && input.value !== '';
+                mine.delete(row.dataset.line);
+                clearInputs(row);
+                showClaimed(row, state.claim);
+                if (lost) showRowError(row, `${state.claim} đã giữ dòng này trước, số bạn gõ đã bị bỏ.`);
+            } else if (row.classList.contains('row-claimed')) {
+                showIdle(row);                               // người kia đã thôi gõ (xóa số / rời trang)
             }
         });
         if (progress) progress.textContent = `Đã đếm ${counted} / ${rows.length} dòng · ${mismatched} dòng lệch`;
     }
 
-    // Lưu & khóa 1 dòng
-    async function saveLine(row) {
-        const input = row.querySelector('.js-counted');
-        const reason = row.querySelector('.js-reason');
-        const button = row.querySelector('.js-save-line');
-        if (!input || button.disabled) return;
-        if (input.value === '') {
-            showRowError(row, 'Nhập số đếm thực tế trước.');
-            input.focus();
-            return;
-        }
-        // Lý do chênh lệch do server kiểm tra: dòng đã có người nhập thì báo điều đó trước, khỏi gõ lý do vô ích
-        const missingReason = refresh(row) !== 0 && reason.value.trim() === '';
+    async function post(action, fields) {
         const body = new FormData();
         body.append('csrf_token', csrf);
-        body.append('action', 'save_line');
+        body.append('action', action);
         body.append('id', countId);
-        body.append('line_id', row.dataset.line);
-        body.append('counted_qty', input.value);
-        body.append('reason', reason.value);
-
-        button.disabled = true;
-        input.readOnly = reason.readOnly = true;
-        let data;
+        Object.entries(fields).forEach(([key, value]) => body.append(key, value));
         try {
             const response = await fetch(endpoint, { method: 'POST', body, credentials: 'same-origin' });
-            data = await response.json();
+            return await response.json();
         } catch (e) {
-            data = { ok: false, message: 'Không lưu được (mất kết nối hoặc phiên đăng nhập đã hết). Tải lại trang rồi thử lại.' };
+            return { ok: false, message: 'Mất kết nối hoặc phiên đăng nhập đã hết. Tải lại trang rồi thử lại.' };
         }
+    }
+
+    // Giữ dòng ngay khi gõ ký tự đầu tiên. Ai gửi tới server trước thì được, người sau nhận tên người giữ.
+    function claim(row) {
+        const line = row.dataset.line;
+        if (claiming.has(line)) return claiming.get(line);
+        const request = post('claim_line', { line_id: line }).then(data => {
+            claiming.delete(line);
+            if (data.ok) {
+                mine.add(line);
+                if (!row.dataset.saving && !row.classList.contains('row-locked')) showMine(row);
+                return true;
+            }
+            mine.delete(line);
+            if (data.lines) {
+                clearInputs(row);
+                applyStates(data.lines);                     // khóa dòng (đã có người lưu) hoặc hiện tên người đang giữ
+            }
+            showRowError(row, data.message || 'Không giữ được dòng này.');
+            return false;
+        });
+        claiming.set(line, request);
+        return request;
+    }
+
+    // Thôi gõ (xóa số / rời dòng khi ô trống): nhả dòng cho người khác
+    function release(row) {
+        const line = row.dataset.line;
+        if (!mine.has(line)) return;
+        mine.delete(line);
+        showIdle(row);
+        post('release_line', { line_id: line });
+    }
+
+    // Lưu 1 dòng rồi khóa. fromEnter: người dùng bấm Enter (được chuyển con trỏ); rời dòng thì không giành con trỏ.
+    async function saveLine(row, fromEnter) {
+        const input = qtyInput(row);
+        const reason = reasonInput(row);
+        if (!input || input.disabled || row.dataset.saving) return false;
+        if (input.value === '') {
+            release(row);
+            if (fromEnter) showRowError(row, 'Nhập số đếm thực tế trước.');
+            return false;
+        }
+        if (refresh(row) !== 0 && reason.value.trim() === '') {
+            showRowError(row, 'Lệch so với tồn hệ thống: nhập lý do chênh lệch, dòng sẽ tự lưu khi bạn rời dòng.');
+            if (fromEnter) reason.focus();
+            return false;
+        }
+        const line = row.dataset.line;
+        if (claiming.has(line) && !(await claiming.get(line))) return false;   // người khác giữ trước -> đã báo
+
+        row.dataset.saving = '1';
+        input.readOnly = reason.readOnly = true;
+        setCounter(row, '<span class="muted"><i class="fas fa-spinner fa-spin"></i> Đang lưu…</span>');
+        const data = await post('save_line', { line_id: line, counted_qty: input.value, reason: reason.value });
         if (data.lines) {
-            // Đã lưu xong (của mình, hoặc người khác nhập trước): bỏ số đang gõ để applyStates khóa dòng theo số trên server
+            // Đã lưu (của mình, hoặc người khác nhập trước): bỏ số đang gõ để applyStates hiện theo số trên server
             input.value = '';
             applyStates(data.lines);
         }
+        delete row.dataset.saving;
         if (row.classList.contains('row-locked')) {
             setHint(data.ok ? 'Đã lưu và khóa dòng.' : data.message);
-            focusNext(row);
-            return;
+            return true;
         }
-        button.disabled = false;
         input.readOnly = reason.readOnly = false;
+        if (mine.has(line)) showMine(row);
         showRowError(row, data.message || 'Có lỗi xảy ra.');
-        (missingReason ? reason : input).focus();
+        return false;
     }
 
-    // Lưu xong: nhảy tới ô nhập của dòng chưa đếm kế tiếp cho nhập liên tục
+    // Bấm Enter lưu xong: nhảy tới ô nhập của dòng còn trống kế tiếp cho nhập liên tục
     function focusNext(row) {
         let next = row.nextElementSibling;
-        while (next && !next.querySelector('.js-counted')) next = next.nextElementSibling;
-        next?.querySelector('.js-counted').focus();
+        while (next && !(qtyInput(next) && !qtyInput(next).disabled)) next = next.nextElementSibling;
+        next && qtyInput(next).focus();
     }
 
     rows.forEach(row => {
@@ -199,20 +306,58 @@ document.querySelectorAll('.js-member-grid').forEach(grid => {
                 refresh(row);
                 row.querySelector('.count-conflict')?.remove();
                 row.classList.remove('row-conflict');
+                const typed = qtyInput(row).value !== '' || reasonInput(row).value !== '';
+                if (typed && !mine.has(row.dataset.line)) claim(row);
             });
-            // Enter ở ô số đếm / lý do = bấm "Lưu & khóa" của dòng đó
-            input.addEventListener('keydown', event => {
+            input.addEventListener('keydown', async event => {
                 if (event.key !== 'Enter' || event.isComposing) return;
                 event.preventDefault();
-                saveLine(row);
+                if (await saveLine(row, true)) focusNext(row);
             });
         });
-        row.querySelector('.js-save-line')?.addEventListener('click', () => saveLine(row));
+        // Rời khỏi dòng (sang dòng khác, bấm ra ngoài): tự lưu; ô trống thì nhả dòng.
+        // Chuyển sang cửa sổ / tab khác thì không tính là rời dòng (đang gõ dở).
+        row.addEventListener('focusout', () => {
+            setTimeout(() => {
+                if (row.contains(document.activeElement) || !document.hasFocus()) return;
+                saveLine(row, false);
+            }, 0);
+        });
+    });
+    form.addEventListener('click', event => {
+        const button = event.target.closest('.js-save-line');
+        if (button) saveLine(button.closest('.js-count-row'), true).then(ok => ok && focusNext(button.closest('.js-count-row')));
     });
     form.addEventListener('submit', event => event.preventDefault());   // không gửi cả bảng: mỗi dòng lưu riêng
 
-    // Nhiều người cùng đếm: cứ vài giây hỏi server dòng nào vừa được người khác nhập (đã khóa) để khóa luôn trên trang này.
-    // Server vẫn là chốt chặn cuối: dòng đã khóa thì không ghi đè dù trang chưa kịp cập nhật.
+    // Đang gõ dở thì định kỳ báo server "vẫn đang nhập" để giữ dòng; ô đã trống và không còn con trỏ thì nhả
+    setInterval(() => {
+        mine.forEach(line => {
+            const row = form.querySelector(`.js-count-row[data-line="${line}"]`);
+            if (!row || row.dataset.saving) return;
+            const typed = qtyInput(row).value !== '' || reasonInput(row).value !== '';
+            if (typed || row.contains(document.activeElement)) {
+                post('claim_line', { line_id: line }).then(data => {
+                    if (!data.ok && data.lines) applyStates(data.lines);
+                });
+            } else {
+                release(row);
+            }
+        });
+    }, HEARTBEAT_MS);
+
+    // Rời / đóng trang: nhả các dòng đang giữ ngay (không chờ hết hạn)
+    window.addEventListener('pagehide', () => {
+        if (!mine.size || !navigator.sendBeacon) return;
+        const body = new FormData();
+        body.append('csrf_token', csrf);
+        body.append('action', 'release_line');
+        body.append('id', countId);
+        mine.forEach(line => body.append('line_ids[]', line));
+        navigator.sendBeacon(endpoint, body);
+    });
+
+    // Nhiều người cùng đếm: vài giây hỏi server 1 lần dòng nào người khác đang gõ / vừa lưu để cập nhật trang này
     async function poll() {
         if (document.hidden) return;
         let data;
@@ -231,7 +376,7 @@ document.querySelectorAll('.js-member-grid').forEach(grid => {
         applyStates(data.lines);
     }
 
-    const timer = pollUrl ? setInterval(poll, 5000) : null;
+    const timer = pollUrl ? setInterval(poll, 3000) : null;
     if (pollUrl) document.addEventListener('visibilitychange', () => { if (!document.hidden) poll(); });
 
     // Duyệt / hủy: còn số đã gõ mà chưa lưu thì nhắc trước (popup xác nhận + khóa nút do js/modal.js lo)
@@ -239,7 +384,7 @@ document.querySelectorAll('.js-member-grid').forEach(grid => {
         decision.addEventListener('submit', event => {
             if (!hasUnsaved()) return;
             event.preventDefault();
-            appDialog({ alert: true, title: 'Còn số đếm chưa lưu', message: 'Có dòng đã nhập số nhưng chưa bấm "Lưu & khóa". Lưu hoặc xóa số đó trước khi chốt đợt kiểm kê.' });
+            appDialog({ alert: true, title: 'Còn số đếm chưa lưu', message: 'Có dòng đã gõ số nhưng chưa lưu được (thường do thiếu lý do chênh lệch). Hoàn tất hoặc xóa số đó trước khi chốt đợt.' });
         });
     });
 
@@ -249,7 +394,7 @@ document.querySelectorAll('.js-member-grid').forEach(grid => {
         if (!link || !hasUnsaved() || link.target === '_blank' || link.getAttribute('href').startsWith('#')
             || event.ctrlKey || event.metaKey || event.shiftKey) return;
         event.preventDefault();
-        appDialog({ title: 'Rời trang?', ok: 'Rời trang', message: 'Có số đếm đã nhập nhưng chưa bấm "Lưu & khóa", rời trang sẽ mất.' })
+        appDialog({ title: 'Rời trang?', ok: 'Rời trang', message: 'Có dòng đã gõ số nhưng chưa lưu được (thường do thiếu lý do chênh lệch), rời trang sẽ mất.' })
             .then(leave => {
                 if (leave) window.location.href = link.href;
             });

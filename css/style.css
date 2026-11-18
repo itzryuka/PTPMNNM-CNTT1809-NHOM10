@@ -823,6 +823,16 @@ body.login-page {
 .count-table .count-by { color: #0f172a; }
 .count-table .count-by .fa-lock { color: #64748b; font-size: 12px; }
 .count-table .js-save-line { white-space: nowrap; }
+.count-table tr.row-claimed { background: #eff6ff; }
+.count-table tr.row-mine { background: #f0fdf4; }
+.count-table .count-claimed { color: #1d4ed8; }
+.count-table .count-mine { color: #15803d; }
+.count-table .count-claimed .fa-pen, .count-table .count-mine .fa-pen { font-size: 12px; }
+.join-card, .open-count-card { display: flex; gap: 12px; align-items: center; justify-content: space-between; flex-wrap: wrap;
+    padding: 12px 16px; margin-bottom: 14px; border: 1px solid #bfdbfe; border-radius: 8px; background: #eff6ff; color: #1e3a8a; }
+.join-card .btn, .open-count-card .btn { display: inline-flex; gap: 6px; align-items: center; }
+.open-count-card form { margin: 0; }
+.open-counts { margin-bottom: 6px; }
 .decision-row { display: flex; gap: 10px; align-items: center; flex-wrap: wrap; }
 .approve-form { display: flex; gap: 10px; flex: 1; min-width: 320px; }
 .decision-row form { margin: 0; }

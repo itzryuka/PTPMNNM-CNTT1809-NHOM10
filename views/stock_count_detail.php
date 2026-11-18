@@ -59,11 +59,18 @@ require __DIR__ . '/layout/header.php';
                         <?= e($count['warehouse_name']) ?> đang kiểm kê: tạm thời không nhận / xuất / gửi / giữ hàng của kho được cho tới khi chốt đợt này.
                     </div>
                     <?php if (!$canEnter): ?>
-                        <div class="alert-error"><i class="fas fa-user-lock"></i> Bạn không có trong danh sách nhân viên kiểm kê đợt này nên chỉ xem được. Cần đếm thì nhờ quản lý kho thêm bạn vào đợt.</div>
+                        <!-- Chưa có tên trong đợt: tự tham gia (nhân viên được phân quyền kho này) -->
+                        <form class="join-card" method="post" action="../handle/stock_count_process.php" data-lock>
+                            <input type="hidden" name="csrf_token" value="<?= e(csrfToken()) ?>">
+                            <input type="hidden" name="action" value="join">
+                            <input type="hidden" name="id" value="<?= (int) $count['id'] ?>">
+                            <span><i class="fas fa-user-plus"></i> Bạn chưa tham gia đợt kiểm kê này nên chỉ xem được.</span>
+                            <button class="btn btn-primary" type="submit"><i class="fas fa-sign-in-alt"></i> Tham gia kiểm kê</button>
+                        </form>
                     <?php endif; ?>
-                    <p class="form-hint"><i class="fas fa-users"></i> Nhiều nhân viên cùng đếm được: đếm xong dòng nào thì nhập số rồi bấm <strong>Lưu &amp; khóa</strong> (hoặc Enter).
-                        Dòng đó <strong>khóa <i class="fas fa-lock"></i> ngay</strong> kèm tên người nhập, không ai ghi đè được; nhập nhầm thì nhờ quản lý kho mở khóa để đếm lại.
-                        Trang tự cập nhật dòng người khác vừa nhập.</p>
+                    <p class="form-hint"><i class="fas fa-users"></i> Nhiều người cùng đếm được: <strong>gõ số vào dòng nào thì dòng đó giữ cho bạn ngay</strong>
+                        (người khác thấy <i class="fas fa-pen"></i> tên bạn và không nhập được dòng đó). Chuyển sang dòng khác hoặc Enter là <strong>tự lưu và khóa <i class="fas fa-lock"></i></strong>;
+                        nhập nhầm thì nhờ quản lý kho mở khóa để đếm lại. Trang tự cập nhật dòng người khác đang nhập / vừa nhập.</p>
                 <?php endif; ?>
 
                 <!-- THÔNG TIN ĐỢT -->
@@ -107,8 +114,8 @@ require __DIR__ . '/layout/header.php';
                 </div>
 
                 <!-- DÒNG KIỂM KÊ -->
-                <!-- Mỗi dòng lưu riêng bằng fetch (action=save_line, js/stock_count.js): lưu xong là khóa ngay -->
-                <form method="post" action="../handle/stock_count_process.php" id="countForm"
+                <!-- Gõ số: giữ dòng (claim_line); chuyển dòng / Enter: lưu riêng dòng đó bằng fetch (save_line) rồi khóa ngay - xem js/stock_count.js -->
+                <form method="post" action="../handle/stock_count_process.php" id="countForm" data-can-enter="<?= $canEnter ? '1' : '' ?>"
                       data-poll="<?= $isOpen ? e('../handle/stock_count_process.php?action=lines&id=' . (int) $count['id']) : '' ?>"
                       data-can-unlock="<?= $canDecide ? '1' : '' ?>">
                     <input type="hidden" name="csrf_token" value="<?= e(csrfToken()) ?>">
@@ -141,18 +148,20 @@ require __DIR__ . '/layout/header.php';
                                         <?php
                                         $lineId  = (int) $line['id'];
                                         $locked  = $line['counted_qty'] !== null;      // đã có người lưu số đếm -> khóa
+                                        // Người khác đang gõ dòng này (giữ dòng còn hạn) -> mình không nhập được
+                                        $claimed = $isOpen && !$locked && $line['claimer_id'] !== null && (int) $line['claimer_id'] !== (int) $user['id'];
                                         $counted = $oldLines[$lineId]['counted_qty'] ?? '';
                                         $reason  = $oldLines[$lineId]['reason'] ?? '';
                                         ?>
-                                        <tr class="js-count-row<?= $isOpen && $locked ? ' row-locked' : '' ?>" data-line="<?= $lineId ?>" data-system="<?= e($line['system_qty']) ?>">
+                                        <tr class="js-count-row<?= $isOpen && $locked ? ' row-locked' : '' ?><?= $claimed ? ' row-claimed' : '' ?>" data-line="<?= $lineId ?>" data-system="<?= e($line['system_qty']) ?>">
                                             <td><?= $n + 1 ?></td>
                                             <td><?= e($line['sku'] . ' - ' . $line['item_name']) ?></td>
                                             <td><?= e($line['batch_no']) ?><br><span class="muted"><?= $line['expiry_date'] ? formatDate($line['expiry_date']) : '—' ?></span></td>
                                             <td class="text-right"><?= formatQty($line['system_qty']) ?> <span class="muted"><?= e($line['unit']) ?></span></td>
                                             <td>
                                                 <?php if ($canEnter && !$locked): ?>
-                                                    <input class="form-control js-counted" type="number" min="0" step="0.001"
-                                                           name="lines[<?= $lineId ?>][counted_qty]" value="<?= e($counted) ?>" placeholder="Chưa đếm">
+                                                    <input class="form-control js-counted" type="number" min="0" step="0.001" <?= $claimed ? 'disabled' : '' ?>
+                                                           name="lines[<?= $lineId ?>][counted_qty]" value="<?= e($counted) ?>" placeholder="<?= $claimed ? 'Người khác đang nhập' : 'Chưa đếm' ?>">
                                                 <?php else: ?>
                                                     <?= $isOpen && $locked ? '<i class="fas fa-lock muted" title="Đã khóa"></i> ' : '' ?><?= $locked ? formatQty($line['counted_qty']) : '—' ?>
                                                 <?php endif; ?>
@@ -160,15 +169,17 @@ require __DIR__ . '/layout/header.php';
                                             <td class="text-right js-diff"><?= $line['counted_qty'] !== null ? diffLabel($line['difference']) : '<span class="muted">—</span>' ?></td>
                                             <td>
                                                 <?php if ($canEnter && !$locked): ?>
-                                                    <input class="form-control js-reason" name="lines[<?= $lineId ?>][reason]" maxlength="255"
+                                                    <input class="form-control js-reason" name="lines[<?= $lineId ?>][reason]" maxlength="255" <?= $claimed ? 'disabled' : '' ?>
                                                            value="<?= e($reason) ?>" placeholder="Bắt buộc khi có chênh lệch">
                                                 <?php else: ?>
                                                     <?= $line['reason'] !== null ? e($line['reason']) : '<span class="muted">—</span>' ?>
                                                 <?php endif; ?>
                                             </td>
                                             <td class="js-counter">
-                                                <?php if ($canEnter && !$locked): ?>
-                                                    <button class="btn btn-primary btn-sm js-save-line" type="button" title="Lưu số đếm dòng này và khóa lại"><i class="fas fa-lock"></i> Lưu &amp; khóa</button>
+                                                <?php if ($claimed): ?>
+                                                    <span class="count-by count-claimed"><i class="fas fa-pen"></i> <strong><?= e($line['claimer_name']) ?></strong> đang nhập…</span>
+                                                <?php elseif ($canEnter && !$locked): ?>
+                                                    <span class="muted">—</span>
                                                 <?php elseif ($line['counted_by_name']): ?>
                                                     <span class="count-by"><?= $isOpen ? '<i class="fas fa-lock"></i> ' : '' ?><strong><?= e($line['counted_by_name']) ?></strong></span>
                                                     <span class="muted"><?= e(date('H:i d/m', strtotime($line['counted_at']))) ?></span>
@@ -254,7 +265,7 @@ require __DIR__ . '/layout/header.php';
                         </div>
                     </div>
                 <?php elseif ($isOpen): ?>
-                    <p class="form-hint text-right"><i class="fas fa-hourglass-half"></i> Nhập và lưu số đếm; quản lý kho sẽ duyệt đợt kiểm kê.</p>
+                    <p class="form-hint text-right"><i class="fas fa-hourglass-half"></i> Nhập số đếm (tự lưu khi chuyển dòng); quản lý kho sẽ duyệt đợt kiểm kê.</p>
                 <?php endif; ?>
 
                 <div class="form-actions">
