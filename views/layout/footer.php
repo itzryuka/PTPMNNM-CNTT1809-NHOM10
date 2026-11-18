@@ -1,6 +1,53 @@
         </div>
     </div>
 
+    <?php
+    // Thanh tab dưới cùng (chỉ hiện trên điện thoại, css/style.css): 5 mục hay dùng nhất, giống thanh điều hướng của app.
+    // Nút giữa "Kiểm kê" kèm số đợt đang mở ở các kho mình được xem (nhắc vào đếm).
+    $tabOpenCounts = 0;
+    if (!empty($user['warehouses'])) {
+        try {
+            $tabStmt = getDbConnection()->prepare("SELECT COUNT(*) FROM stock_counts WHERE status = 'COUNTING' AND warehouse_id IN ("
+                . implode(',', array_fill(0, count($user['warehouses']), '?')) . ')');
+            $tabStmt->execute(array_map('intval', $user['warehouses']));
+            $tabOpenCounts = (int) $tabStmt->fetchColumn();
+        } catch (Throwable $e) {
+            $tabOpenCounts = 0;                              // lỗi CSDL: chỉ mất số nhắc, không hỏng trang
+        }
+    }
+    $tabGroups = [
+        'dashboard' => ['dashboard'],
+        'vouchers'  => ['imports', 'exports', 'transfers', 'transfer_requests', 'adjustments'],
+        'counting'  => ['stock_counts', 'differences', 'count_report'],
+        'stock'     => ['current_stock', 'ledger_summary', 'ledger', 'reconciliation', 'items', 'batches', 'warehouses'],
+    ];
+    $tabActive = '';
+    foreach ($tabGroups as $tabKey => $tabMenus) {
+        if (in_array($activeMenu ?? '', $tabMenus, true)) {
+            $tabActive = $tabKey;
+        }
+    }
+    ?>
+    <nav class="bottom-nav" aria-label="Điều hướng nhanh">
+        <a href="<?= $basePath ?>index.php" class="<?= $tabActive === 'dashboard' ? 'current' : '' ?>">
+            <i class="fas fa-home"></i><span>Tổng quan</span>
+        </a>
+        <a href="<?= $basePath ?>views/voucher_list.php?type=IMPORT" class="<?= $tabActive === 'vouchers' ? 'current' : '' ?>">
+            <i class="fas fa-file-invoice"></i><span>Phiếu</span>
+        </a>
+        <a href="<?= $basePath ?>views/stock_count_list.php" class="bottom-nav-main<?= $tabActive === 'counting' ? ' current' : '' ?>">
+            <span class="bottom-nav-bubble"><i class="fas fa-clipboard-check"></i>
+                <?php if ($tabOpenCounts > 0): ?><b class="bottom-nav-badge" title="<?= $tabOpenCounts ?> đợt đang mở"><?= $tabOpenCounts ?></b><?php endif; ?>
+            </span><span>Kiểm kê</span>
+        </a>
+        <a href="<?= $basePath ?>views/report_stock.php" class="<?= $tabActive === 'stock' ? 'current' : '' ?>">
+            <i class="fas fa-boxes"></i><span>Tồn kho</span>
+        </a>
+        <button type="button" class="js-bottom-menu<?= $tabActive === '' ? ' current' : '' ?>" aria-label="Mở menu đầy đủ">
+            <i class="fas fa-bars"></i><span>Menu</span>
+        </button>
+    </nav>
+
     <!-- Popup xác nhận / thông báo dùng chung (thay cho confirm() / alert() của trình duyệt), điều khiển bởi js/modal.js -->
     <div class="modal-backdrop" id="confirmModal">
         <div class="modal modal-sm" role="dialog" aria-modal="true" aria-labelledby="confirmTitle">

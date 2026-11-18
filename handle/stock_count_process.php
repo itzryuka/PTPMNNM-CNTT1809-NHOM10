@@ -17,7 +17,12 @@ if ($_SERVER['REQUEST_METHOD'] === 'GET' && ($_GET['action'] ?? '') === 'lines')
         http_response_code(404);
         exit(json_encode(['error' => 'Không tìm thấy đợt kiểm kê.'], JSON_UNESCAPED_UNICODE));
     }
-    exit(json_encode(['status' => $count['status'], 'lines' => getStockCountLineStates($pdo, (int) $count['id'], (int) $user['id'])], JSON_UNESCAPED_UNICODE));
+    exit(json_encode([
+        'status'    => $count['status'],
+        'code'      => $count['code'],
+        'closed_by' => $count['status'] === 'COUNTING' ? null : $count['approver_name'],   // ai vừa duyệt / hủy đợt
+        'lines'     => getStockCountLineStates($pdo, (int) $count['id'], (int) $user['id']),
+    ], JSON_UNESCAPED_UNICODE));
 }
 
 if ($_SERVER['REQUEST_METHOD'] !== 'POST') {

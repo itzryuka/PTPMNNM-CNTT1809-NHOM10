@@ -43,6 +43,9 @@ document.querySelectorAll('.js-member-grid').forEach(grid => {
     const rows = [...form.querySelectorAll('.js-count-row')];
     const hint = document.getElementById('dirtyHint');
     const progress = document.getElementById('countProgress');
+    const barFill = document.getElementById('countBarFill');
+    const barText = document.getElementById('countBarText');
+    const filterTodo = document.getElementById('countFilterTodo');
     const pollUrl = form.dataset.poll;
     const canUnlock = form.dataset.canUnlock === '1';
     const csrf = form.querySelector('[name="csrf_token"]').value;
@@ -52,6 +55,7 @@ document.querySelectorAll('.js-member-grid').forEach(grid => {
     const mine = new Set();                                  // các dòng mình đang giữ
     const claiming = new Map();                              // dòng đang gửi yêu cầu giữ -> Promise
     let unlockedNotice = false;
+    let closed = false;                                      // quản lý đã duyệt / hủy đợt trong lúc trang đang mở
 
     const qtyInput = row => row.querySelector('.js-counted');
     const reasonInput = row => row.querySelector('.js-reason');
@@ -251,6 +255,35 @@ document.querySelectorAll('.js-member-grid').forEach(grid => {
             }
         });
         if (progress) progress.textContent = `Đã đếm ${counted} / ${rows.length} dòng · ${mismatched} dòng lệch`;
+        if (barFill) barFill.style.width = `${rows.length ? Math.round(counted * 100 / rows.length) : 0}%`;
+        if (barText) barText.innerHTML = `<strong>${counted}</strong> / ${rows.length} dòng đã đếm`;
+        rows.forEach(row => {
+            const state = lines[row.dataset.line];
+            if (state) row.dataset.counted = state.counted ? '1' : '';
+        });
+        applyFilter();
+    }
+
+    const isDirtySafe = row => !!qtyInput(row) && isDirty(row);
+
+    // "Chỉ dòng chưa đếm": ẩn dòng đã có số (trừ dòng đang gõ / đang sửa dở để không mất chỗ đang nhập)
+    function applyFilter() {
+        const only = filterTodo?.checked;
+        let shown = 0;
+        rows.forEach(row => {
+            const hide = only && row.dataset.counted === '1' && !row.contains(document.activeElement) && !isDirtySafe(row);
+            row.hidden = !!hide;
+            if (!hide) shown++;
+        });
+        form.querySelector('.count-empty')?.remove();
+        if (only && shown === 0) {
+            const tbody = rows[0]?.parentElement;
+            tbody?.insertAdjacentHTML('beforeend', `<tr class="count-empty"><td colspan="8" class="muted text-center"><i class="fas fa-check-circle"></i> Đã đếm hết tất cả các dòng.</td></tr>`);
+        }
+    }
+    if (filterTodo) {
+        rows.forEach(row => { row.dataset.counted = row.classList.contains('row-locked') || isOwnSaved(row) ? '1' : ''; });
+        filterTodo.addEventListener('change', applyFilter);
     }
 
     async function post(action, fields) {
@@ -261,7 +294,9 @@ document.querySelectorAll('.js-member-grid').forEach(grid => {
         Object.entries(fields).forEach(([key, value]) => body.append(key, value));
         try {
             const response = await fetch(endpoint, { method: 'POST', body, credentials: 'same-origin' });
-            return await response.json();
+            const data = await response.json();
+            if (response.status === 422) poll();             // bị từ chối: có thể đợt vừa bị chốt -> hỏi ngay để báo
+            return data;
         } catch (e) {
             return { ok: false, message: 'Mất kết nối hoặc phiên đăng nhập đã hết. Tải lại trang rồi thử lại.' };
         }
@@ -433,11 +468,29 @@ document.querySelectorAll('.js-member-grid').forEach(grid => {
         }
         if (!data.lines) return;
         if (data.status !== 'COUNTING') {
-            setHint('Đợt kiểm kê vừa được chốt: tải lại trang để xem kết quả.');
-            clearInterval(timer);
+            countClosed(data);
             return;
         }
         applyStates(data.lines);
+    }
+
+    // Quản lý duyệt / hủy đợt khi mọi người còn đang đếm: khóa trang, hiện thông báo, Đồng ý -> về trang danh sách kiểm kê
+    function countClosed(data) {
+        if (closed) return;
+        closed = true;
+        clearInterval(timer);
+        mine.clear();
+        form.querySelectorAll('input, button').forEach(el => { el.disabled = true; });
+        const action = data.status === 'APPROVED' ? 'chốt (duyệt)' : 'hủy';
+        const by = data.closed_by ? ` bởi ${data.closed_by}` : '';
+        setHint(`Đợt kiểm kê đã được ${action}${by}.`);
+        appDialog({
+            alert: true,
+            variant: data.status === 'APPROVED' ? 'info' : 'danger',
+            title: 'Đợt kiểm kê đã kết thúc',
+            ok: 'Đồng ý',
+            message: `Đợt ${data.code} vừa được ${action}${by}. Không nhập thêm số đếm được nữa; số đang gõ dở (nếu có) sẽ không được ghi. Bấm Đồng ý để quay lại trang kiểm kê.`,
+        }).then(() => { window.location.href = 'stock_count_list.php'; });
     }
 
     const timer = pollUrl ? setInterval(poll, 3000) : null;

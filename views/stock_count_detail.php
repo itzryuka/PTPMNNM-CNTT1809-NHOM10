@@ -123,6 +123,14 @@ require __DIR__ . '/layout/header.php';
                     <input type="hidden" name="action" value="save">
                     <input type="hidden" name="id" value="<?= (int) $count['id'] ?>">
 
+                    <?php if ($isOpen && $lines): ?>
+                        <!-- Thanh tiến độ dính trên đầu khi cuộn + lọc chỉ dòng chưa đếm (js/stock_count.js cập nhật) -->
+                        <div class="count-bar" id="countBar">
+                            <div class="count-bar-track"><div class="count-bar-fill" id="countBarFill" style="width: <?= round($countedRows * 100 / count($lines)) ?>%;"></div></div>
+                            <span class="count-bar-text" id="countBarText"><strong><?= $countedRows ?></strong> / <?= count($lines) ?> dòng đã đếm</span>
+                            <label class="count-filter"><input type="checkbox" id="countFilterTodo"> Chỉ dòng chưa đếm</label>
+                        </div>
+                    <?php endif; ?>
                     <div class="panel" style="margin-top: 20px;">
                         <div class="panel-header">
                             <h3><i class="fas fa-list-ol"></i> Số tồn hệ thống và số đếm thực tế</h3>
@@ -162,20 +170,21 @@ require __DIR__ . '/layout/header.php';
                                         ?>
                                         <tr class="js-count-row<?= $isOpen && $locked && !$own ? ' row-locked' : '' ?><?= $own ? ' row-saved' : '' ?><?= $claimed ? ' row-claimed' : '' ?>" data-line="<?= $lineId ?>" data-system="<?= e($line['system_qty']) ?>"
                                             <?php if ($own): ?>data-saved-qty="<?= e($savedQty) ?>" data-saved-reason="<?= e($savedWhy) ?>" data-saved-by="<?= e($line['counted_by_name']) ?>" data-saved-at="<?= e($countedAt) ?>"<?php endif; ?>>
+                                            <!-- data-label: tên cột hiện trên thẻ ở giao diện điện thoại (css/style.css) -->
                                             <td><?= $n + 1 ?></td>
-                                            <td><?= e($line['sku'] . ' - ' . $line['item_name']) ?></td>
-                                            <td><?= e($line['batch_no']) ?><br><span class="muted"><?= $line['expiry_date'] ? formatDate($line['expiry_date']) : '—' ?></span></td>
-                                            <td class="text-right"><?= formatQty($line['system_qty']) ?> <span class="muted"><?= e($line['unit']) ?></span></td>
-                                            <td>
+                                            <td data-label="Mặt hàng"><?= e($line['sku'] . ' - ' . $line['item_name']) ?></td>
+                                            <td data-label="Lô / Hạn SD"><?= e($line['batch_no']) ?><br><span class="muted"><?= $line['expiry_date'] ? formatDate($line['expiry_date']) : '—' ?></span></td>
+                                            <td class="text-right" data-label="Tồn hệ thống"><?= formatQty($line['system_qty']) ?> <span class="muted"><?= e($line['unit']) ?></span></td>
+                                            <td data-label="Đếm thực tế">
                                                 <?php if ($editable): ?>
-                                                    <input class="form-control js-counted" type="number" min="0" step="any" <?= $claimed ? 'disabled' : '' ?>
+                                                    <input class="form-control js-counted" type="number" inputmode="decimal" min="0" step="any" <?= $claimed ? 'disabled' : '' ?>
                                                            name="lines[<?= $lineId ?>][counted_qty]" value="<?= e($counted) ?>" placeholder="<?= $claimed ? 'Người khác đang nhập' : 'Chưa đếm' ?>">
                                                 <?php else: ?>
                                                     <?= $isOpen && $locked ? '<i class="fas fa-lock muted" title="Đã khóa"></i> ' : '' ?><?= $locked ? formatQty($line['counted_qty']) : '—' ?>
                                                 <?php endif; ?>
                                             </td>
-                                            <td class="text-right js-diff"><?= $line['counted_qty'] !== null ? diffLabel($line['difference']) : '<span class="muted">—</span>' ?></td>
-                                            <td>
+                                            <td class="text-right js-diff" data-label="Chênh lệch"><?= $line['counted_qty'] !== null ? diffLabel($line['difference']) : '<span class="muted">—</span>' ?></td>
+                                            <td data-label="Lý do chênh lệch">
                                                 <?php if ($editable): ?>
                                                     <input class="form-control js-reason" name="lines[<?= $lineId ?>][reason]" maxlength="255" <?= $claimed ? 'disabled' : '' ?>
                                                            value="<?= e($reason) ?>" placeholder="Bắt buộc khi có chênh lệch">
@@ -183,7 +192,7 @@ require __DIR__ . '/layout/header.php';
                                                     <?= $line['reason'] !== null ? e($line['reason']) : '<span class="muted">—</span>' ?>
                                                 <?php endif; ?>
                                             </td>
-                                            <td class="js-counter">
+                                            <td class="js-counter" data-label="Người nhập">
                                                 <?php if ($claimed): ?>
                                                     <span class="count-by count-claimed"><i class="fas fa-pen"></i> <strong><?= e($line['claimer_name']) ?></strong> đang nhập…</span>
                                                 <?php elseif ($own): ?>
