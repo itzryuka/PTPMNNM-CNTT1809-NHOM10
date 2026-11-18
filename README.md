@@ -28,16 +28,15 @@
 
 ---
 
-## Mục lục
+## Thành viên & phân công
 
-1. [Giới thiệu đề tài](#1-giới-thiệu-đề-tài)
-2. [Ngôn ngữ & Công nghệ chính](#2-ngôn-ngữ--công-nghệ-chính)
-3. [Giao diện hệ thống](#3-giao-diện-hệ-thống)
-4. [Hướng dẫn cài đặt](#4-hướng-dẫn-cài-đặt)
-5. [Quy tắc nghiệp vụ](#5-quy-tắc-nghiệp-vụ)
-6. [Chức năng mở rộng](#6-chức-năng-mở-rộng)
-7. [Hướng phát triển](#7-hướng-phát-triển)
-8. [Thành viên & phân công](#8-thành-viên--phân-công)
+**Giảng viên hướng dẫn:** ThS. Lê Tuấn Anh
+
+| STT | Họ và tên | Mã sinh viên | Vai trò | Công việc chính |
+|:---:|---|:---:|---|---|
+| 1 | Nguyễn Đăng Quang | 1871020481 | Nhóm trưởng | Thiết kế CSDL và sổ phát sinh; nghiệp vụ phiếu nhập / xuất / điều chuyển; kiểm kê nhiều người; trợ lý AI; triển khai lên Render |
+| 2 | Nguyễn Thị Tuyết | 1871020644 | Thành viên | Thiết kế giao diện (máy tính và điện thoại); danh mục kho, mặt hàng, lô hàng; nhập / xuất file Excel; viết tài liệu báo cáo |
+| 3 | Đỗ Trung Kiên | 1871020344 | Thành viên | Tài khoản và phân quyền kho; yêu cầu điều chuyển; các trang báo cáo và thông báo; dữ liệu mẫu và kiểm thử |
 
 ---
 
@@ -271,17 +270,5 @@ Ngoài các yêu cầu chính của đề tài, nhóm làm thêm:
 - 📶 **Kiểm kê khi mất mạng:** lưu tạm trên điện thoại, có mạng thì tự đồng bộ.
 - 🔌 **API** để kết nối với phần mềm bán hàng / kế toán.
 - 🤖 Mở rộng **Trợ lý AI**: gợi ý số lượng cần nhập, phát hiện bất thường trong số liệu kho.
-
----
-
-## 8. Thành viên & phân công
-
-**Giảng viên hướng dẫn:** ThS. Lê Tuấn Anh
-
-| STT | Họ và tên | Mã sinh viên | Vai trò | Công việc chính |
-|:---:|---|:---:|---|---|
-| 1 | Nguyễn Đăng Quang | 1871020481 | Nhóm trưởng | Thiết kế CSDL và sổ phát sinh; nghiệp vụ phiếu nhập / xuất / điều chuyển; kiểm kê nhiều người; trợ lý AI; triển khai lên Render |
-| 2 | Nguyễn Thị Tuyết | 1871020644 | Thành viên | Thiết kế giao diện (máy tính và điện thoại); danh mục kho, mặt hàng, lô hàng; nhập / xuất file Excel; viết tài liệu báo cáo |
-| 3 | Đỗ Trung Kiên | 1871020344 | Thành viên | Tài khoản và phân quyền kho; yêu cầu điều chuyển; các trang báo cáo và thông báo; dữ liệu mẫu và kiểm thử |
 
 <p align="center">© 2026 Nhóm 10 – CNTT 18-09 · Khoa Công nghệ Thông tin – Trường Đại học Đại Nam</p>
