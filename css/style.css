@@ -310,14 +310,43 @@ body {
     cursor: pointer;
     position: relative;
 }
-.nav-right .fa-bell::after {
-    content: '';
-    position: absolute;
-    top: 0; right: 0;
-    width: 8px; height: 8px;
-    background-color: var(--btn-danger);
-    border-radius: 50%;
-}
+
+/* Chuông thông báo + khung thả xuống (views/layout/header.php, js/main.js) */
+.noti { position: relative; display: flex; }
+.noti-btn { position: relative; display: flex; align-items: center; justify-content: center; width: 38px; height: 38px;
+    background: none; border: none; border-radius: 50%; cursor: pointer; transition: background .15s; }
+.noti-btn:hover, .noti-btn[aria-expanded="true"] { background: #f1f5f9; }
+.noti-btn[aria-expanded="true"] .fa-bell { color: var(--btn-export); }
+.noti-badge { position: absolute; top: 2px; right: 0; min-width: 18px; height: 18px; padding: 0 5px; border-radius: 9px; border: 2px solid #fff;
+    background: var(--btn-danger); color: #fff; font-size: 10.5px; font-weight: 700; line-height: 14px; text-align: center; box-sizing: border-box; }
+.noti-panel { position: absolute; top: calc(100% + 12px); right: -8px; z-index: 950; width: 370px; max-width: calc(100vw - 24px);
+    background: #fff; border: 1px solid var(--border-color); border-radius: 14px; box-shadow: 0 18px 48px rgba(15, 23, 42, .18);
+    overflow: hidden; animation: noti-in .15s ease-out; }
+.noti-panel[hidden] { display: none; }
+@keyframes noti-in { from { opacity: 0; transform: translateY(-6px); } to { opacity: 1; transform: none; } }
+.noti-head { display: flex; align-items: center; justify-content: space-between; gap: 10px; padding: 14px 16px; border-bottom: 1px solid var(--border-color); }
+.noti-head strong { font-size: 15px; color: var(--text-main); }
+.noti-read { background: none; border: none; color: var(--btn-export); font-size: 12.5px; cursor: pointer; padding: 4px 6px; border-radius: 6px; }
+.noti-read:hover { background: #eff6ff; }
+.noti-list { max-height: 440px; overflow-y: auto; overscroll-behavior: contain; }
+.noti-item { display: flex; gap: 12px; padding: 12px 16px; text-decoration: none; color: inherit; border-bottom: 1px solid #f1f5f9; position: relative; }
+.noti-item:last-child { border-bottom: none; }
+.noti-item:hover { background: #f8fafc; }
+.noti-item.unread { background: #f5f8ff; }
+.noti-item.unread::after { content: ''; position: absolute; top: 18px; right: 14px; width: 8px; height: 8px; border-radius: 50%; background: var(--btn-export); }
+.noti-icon { flex: 0 0 36px; height: 36px; border-radius: 50%; display: flex; align-items: center; justify-content: center; font-size: 15px; }
+.tone-amber  { background: #fef3c7; color: #b45309; }
+.tone-blue   { background: #dbeafe; color: #1d4ed8; }
+.tone-indigo { background: #e0e7ff; color: #4338ca; }
+.tone-red    { background: #fee2e2; color: #b91c1c; }
+.tone-green  { background: #dcfce7; color: #15803d; }
+.tone-slate  { background: #f1f5f9; color: #475569; }
+.noti-body { display: flex; flex-direction: column; gap: 2px; min-width: 0; padding-right: 14px; }
+.noti-body strong { font-size: 13.5px; font-weight: 600; color: var(--text-main); line-height: 1.35; }
+.noti-body span { font-size: 12.5px; color: #64748b; overflow: hidden; text-overflow: ellipsis; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; }
+.noti-body small { font-size: 11.5px; color: #94a3b8; }
+.noti-empty { display: flex; flex-direction: column; align-items: center; gap: 8px; padding: 36px 16px; color: #94a3b8; font-size: 13.5px; }
+.noti-empty i { font-size: 26px; }
 .avatar {
     width: 38px;
     height: 38px;
@@ -1051,8 +1080,12 @@ tfoot td { font-weight: 700; background: var(--bg-table-head); }
 
     /* Thanh trên + vùng nội dung */
     .top-navbar { height: 56px; padding: 0 12px; gap: 10px; }
-    .page-title-nav { font-size: 16px; }
-    .nav-right { gap: 14px; }
+    .page-title-nav { font-size: 16px; padding-left: 12px; }
+    .nav-left { flex: 1 1 auto; gap: 12px; }
+    .nav-right { gap: 8px; margin-left: auto; }   /* ô tìm kiếm giữa bị ẩn: đẩy chuông + tài khoản sát mép phải */
+    .noti-panel { position: fixed; top: 62px; left: 8px; right: 8px; width: auto; max-width: none; z-index: 1001; }
+    .noti-list { max-height: calc(100vh - 62px - 70px - 96px - env(safe-area-inset-bottom)); }
+    .noti-item { padding: 13px 14px; }
     .content-body { padding: 14px 12px calc(96px + env(safe-area-inset-bottom)); }   /* chừa đáy cho thanh tab + bong bóng */
 
     /* Form, thông tin: 1 cột; ô nhập chữ 16px để iPhone không tự phóng to */

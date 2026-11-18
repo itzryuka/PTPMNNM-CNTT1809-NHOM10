@@ -34,6 +34,63 @@ toggleBtn.addEventListener('click', () => {
     }
 });
 
+// === Chuông thông báo: bấm mở / đóng khung; "đã đọc" lưu ở trình duyệt theo giờ server (data-now) ===
+(function () {
+    const box = document.getElementById('noti');
+    if (!box) return;
+    const btn = document.getElementById('notiBtn');
+    const panel = document.getElementById('notiPanel');
+    const badge = document.getElementById('notiBadge');
+    const items = [...box.querySelectorAll('.noti-item')];
+    const key = 'omnistock.notiSeen.' + box.dataset.user;
+    const now = Number(box.dataset.now);
+
+    function readSeen() {
+        try { return Number(localStorage.getItem(key)) || 0; } catch (e) { return 0; }
+    }
+    function writeSeen(value) {
+        try { localStorage.setItem(key, String(value)); } catch (e) { /* chế độ riêng tư: bỏ qua */ }
+    }
+    function render(seen) {
+        let unread = 0;
+        items.forEach(item => {
+            const isNew = Number(item.dataset.at) > seen;
+            item.classList.toggle('unread', isNew);
+            if (isNew) unread++;
+        });
+        badge.hidden = unread === 0;
+        badge.textContent = unread > 9 ? '9+' : String(unread);
+        btn.title = unread ? `Thông báo (${unread} chưa đọc)` : 'Thông báo';
+    }
+    function setOpen(open) {
+        panel.hidden = !open;
+        btn.setAttribute('aria-expanded', String(open));
+        if (open) {
+            badge.hidden = true;                             // đã xem: tắt số trên chuông, chấm xanh từng dòng còn tới lần sau
+            writeSeen(now);
+        }
+    }
+
+    render(readSeen());
+    btn.addEventListener('click', event => {
+        event.stopPropagation();
+        setOpen(panel.hidden);
+    });
+    document.getElementById('notiRead')?.addEventListener('click', () => {
+        writeSeen(now);
+        render(now);
+    });
+    document.addEventListener('click', event => {
+        if (!panel.hidden && !box.contains(event.target)) setOpen(false);
+    });
+    document.addEventListener('keydown', event => {
+        if (event.key === 'Escape' && !panel.hidden) {
+            setOpen(false);
+            btn.focus();
+        }
+    });
+})();
+
 function toggleSubMenu(element) {
     if(sidebar.classList.contains('collapsed')) {
         sidebar.classList.remove('collapsed');

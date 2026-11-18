@@ -65,6 +65,16 @@ function menuHref(string $href, string $basePath): string
 {
     return $href === '#' ? '#' : $basePath . $href;
 }
+
+// Thông báo ở chuông (functions/notification_functions.php); lỗi CSDL chỉ làm chuông trống, không hỏng trang
+require_once __DIR__ . '/../../functions/notification_functions.php';
+$notiItems = [];
+$notiNow   = time();
+try {
+    [$notiItems, $notiNow] = getNotifications(getDbConnection(), $user);
+} catch (Throwable $e) {
+    $notiItems = [];
+}
 ?>
 <!DOCTYPE html>
 <html lang="vi">
@@ -136,7 +146,32 @@ function menuHref(string $href, string $basePath): string
             </div>
 
             <div class="nav-right">
-                <i class="fas fa-bell" title="Thông báo"></i>
+                <div class="noti" id="noti" data-now="<?= (int) $notiNow ?>" data-user="<?= (int) $user['id'] ?>">
+                    <button type="button" class="noti-btn" id="notiBtn" title="Thông báo" aria-haspopup="true" aria-expanded="false" aria-controls="notiPanel">
+                        <i class="fas fa-bell"></i><b class="noti-badge" id="notiBadge" hidden></b>
+                    </button>
+                    <div class="noti-panel" id="notiPanel" role="dialog" aria-label="Thông báo" hidden>
+                        <div class="noti-head">
+                            <strong>Thông báo</strong>
+                            <?php if ($notiItems): ?><button type="button" class="noti-read" id="notiRead"><i class="fas fa-check-double"></i> Đánh dấu đã đọc</button><?php endif; ?>
+                        </div>
+                        <div class="noti-list">
+                            <?php foreach ($notiItems as $noti): ?>
+                                <a class="noti-item" href="<?= e($basePath . $noti['url']) ?>" data-at="<?= (int) $noti['at'] ?>">
+                                    <span class="noti-icon tone-<?= e($noti['tone']) ?>"><i class="fas <?= e($noti['icon']) ?>"></i></span>
+                                    <span class="noti-body">
+                                        <strong><?= e($noti['title']) ?></strong>
+                                        <span><?= e($noti['text']) ?></span>
+                                        <small><?= e(timeAgo($noti['at'], $notiNow)) ?></small>
+                                    </span>
+                                </a>
+                            <?php endforeach; ?>
+                            <?php if (!$notiItems): ?>
+                                <div class="noti-empty"><i class="fas fa-bell-slash"></i><span>Chưa có thông báo nào</span></div>
+                            <?php endif; ?>
+                        </div>
+                    </div>
+                </div>
                 <a class="user-link" href="<?= $basePath ?>views/change_password.php" title="<?= e($user['username']) ?> · Đổi mật khẩu">
                     <div class="user-info">
                         <strong><?= e($user['full_name']) ?></strong>
