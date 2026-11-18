@@ -124,6 +124,7 @@ body {
     font-size: 14px;
     text-decoration: none;          /* menu-btn có thể là thẻ <a> (Dashboard) */
     cursor: pointer;
+    -webkit-user-select: none;
     user-select: none;
     transition: background-color 0.2s, color 0.2s;
 }
@@ -982,7 +983,7 @@ tfoot td { font-weight: 700; background: var(--bg-table-head); }
 .check-chip:has(input:checked) { border-color: var(--btn-primary); background: #eef2ff; }
 .secret-box { display: grid; grid-template-columns: auto 1fr; gap: 8px 14px; margin-bottom: 12px; }
 .secret-box dt { color: #64748b; font-size: 13px; }
-.secret-box code { font-size: 18px; font-weight: 700; letter-spacing: 1px; background: #f1f5f9; padding: 2px 8px; border-radius: 4px; user-select: all; }
+.secret-box code { font-size: 18px; font-weight: 700; letter-spacing: 1px; background: #f1f5f9; padding: 2px 8px; border-radius: 4px; -webkit-user-select: all; user-select: all; }
 .alert-info-box { display: flex; gap: 12px; align-items: flex-start; padding: 12px 16px; margin-bottom: 16px; border-radius: 8px; background: #eef2ff; color: #3730a3; border: 1px solid #c7d2fe; font-size: 13.5px; line-height: 1.55; }
 .alert-info-box > i { margin-top: 3px; }
 .text-center { text-align: center; }
@@ -1035,7 +1036,7 @@ tfoot td { font-weight: 700; background: var(--bg-table-head); }
 .count-bar-track { flex: 1 1 160px; height: 8px; background: #e2e8f0; border-radius: 99px; overflow: hidden; }
 .count-bar-fill { height: 100%; background: linear-gradient(90deg, #22c55e, #16a34a); border-radius: inherit; transition: width .3s ease; }
 .count-bar-text { font-size: 13.5px; color: #334155; white-space: nowrap; }
-.count-filter { display: inline-flex; align-items: center; gap: 6px; font-size: 13.5px; color: #334155; cursor: pointer; user-select: none; white-space: nowrap; }
+.count-filter { display: inline-flex; align-items: center; gap: 6px; font-size: 13.5px; color: #334155; cursor: pointer; -webkit-user-select: none; user-select: none; white-space: nowrap; }
 .count-filter input { width: 16px; height: 16px; accent-color: var(--btn-export); }
 .count-table tr.count-empty td { padding: 22px; }
 .count-table tr.js-count-row[hidden] { display: none !important; }
@@ -1053,7 +1054,7 @@ tfoot td { font-weight: 700; background: var(--bg-table-head); }
     .bottom-nav { display: grid; grid-template-columns: repeat(5, minmax(0, 1fr)); position: fixed; left: 0; right: 0; bottom: 0; z-index: 950;
         height: calc(62px + env(safe-area-inset-bottom)); padding-bottom: env(safe-area-inset-bottom);
         background: rgba(255, 255, 255, .97); border-top: 1px solid var(--border-color); box-shadow: 0 -4px 18px rgba(15, 23, 42, .06);
-        backdrop-filter: blur(8px); }
+        -webkit-backdrop-filter: blur(8px); backdrop-filter: blur(8px); }
     .bottom-nav a, .bottom-nav button { display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 3px;
         border: none; background: none; color: #64748b; text-decoration: none; font: inherit; font-size: 11px; font-weight: 500; cursor: pointer;
         -webkit-tap-highlight-color: transparent; }
@@ -1111,7 +1112,7 @@ tfoot td { font-weight: 700; background: var(--bg-table-head); }
     .summary-card .value { font-size: 19px; }
 
     /* Bảng: cuộn ngang trong khung, không đẩy cả trang */
-    .table-container { overflow-x: auto; -webkit-overflow-scrolling: touch; }
+    .table-container { overflow-x: auto; }
     .pagination-container { flex-wrap: wrap; gap: 10px; padding: 10px 12px; justify-content: center; }
 
     /* Popup: gần toàn màn hình */
@@ -1174,7 +1175,7 @@ tfoot td { font-weight: 700; background: var(--bg-table-head); }
 
     /* --- Trợ lý AI: bong bóng tròn kéo thả được (vị trí do js/chat.js đặt), khung chat toàn màn hình --- */
     .chat-fab { top: auto; right: 14px; bottom: calc(80px + env(safe-area-inset-bottom)); transform: none; width: 54px; height: 54px; padding: 0; border-radius: 50%;
-        justify-content: center; gap: 0; touch-action: none; user-select: none; -webkit-user-select: none;
+        justify-content: center; gap: 0; touch-action: none; -webkit-user-select: none; user-select: none;
         box-shadow: 0 6px 18px rgba(79, 70, 229, .45); transition: box-shadow .15s, left .2s ease, top .2s ease; }
     .chat-fab:hover, .chat-fab[aria-expanded="true"] { padding: 0; }
     .chat-fab.dragging { transition: none; box-shadow: 0 10px 28px rgba(79, 70, 229, .55); cursor: grabbing; }

@@ -1,0 +1,11 @@
+{
+    "extends": ["development"],
+    "hints": {
+        "compat-api/css": [
+            "default",
+            {
+                "ignore": ["scrollbar-width", "scrollbar-color", "-ms-overflow-style"]
+            }
+        ]
+    }
+}
