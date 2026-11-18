@@ -816,6 +816,13 @@ body.login-page {
 .count-table .form-control { min-width: 110px; }
 .count-table tr.has-diff { background: #fffbeb; }
 .count-table .needs-reason { border-color: #f59e0b; }
+.count-table tr.row-locked { background: #f8fafc; color: #475569; }
+.count-table tr.row-conflict { background: #fef2f2; }
+.count-table .count-conflict { display: block; margin-top: 4px; font-size: 12px; color: #b91c1c; }
+.count-table .js-counter .icon-btn { margin-left: 4px; }
+.count-table .count-by { color: #0f172a; }
+.count-table .count-by .fa-lock { color: #64748b; font-size: 12px; }
+.count-table .js-save-line { white-space: nowrap; }
 .decision-row { display: flex; gap: 10px; align-items: center; flex-wrap: wrap; }
 .approve-form { display: flex; gap: 10px; flex: 1; min-width: 320px; }
 .decision-row form { margin: 0; }

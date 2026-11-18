@@ -18,12 +18,14 @@ $sort = readSort(STOCK_COUNT_SORT_COLUMNS, 'created', 'desc');
 
 $counts      = [];
 $warehouses  = [];
+$candidates  = [];
 $openByWh    = [];
 $totalCounts = 0;
 $dbError     = '';
 try {
     $pdo         = getDbConnection();
     $warehouses  = getWarehouseOptions($pdo, $user['warehouses']);
+    $candidates  = isManager($user) ? getStockCountCandidates($pdo, array_column($warehouses, 'id')) : [];
     $totalCounts = countStockCounts($pdo, $filters, $user['warehouses']);
     $totalPages  = max(1, (int) ceil($totalCounts / $pageSize));
     $page        = min($page, $totalPages);
@@ -39,12 +41,13 @@ try {
 $pageTitle  = $filters['status'] === 'COUNTING' ? 'Xử lý chênh lệch kiểm kê' : 'Đợt kiểm kê';
 $basePath   = '../';
 $activeMenu = $filters['status'] === 'COUNTING' ? 'differences' : 'stock_counts';
+$extraScripts = ['js/stock_count.js'];
 require __DIR__ . '/layout/header.php';
 ?>
 
             <?php if (isManager($user) && $warehouses): ?>
                 <!-- MỞ ĐỢT KIỂM KÊ MỚI -->
-                <form class="form-card" method="post" action="../handle/stock_count_process.php" data-lock
+                <form class="form-card" id="newCountForm" method="post" action="../handle/stock_count_process.php" data-lock
                       data-confirm-title="Mở đợt kiểm kê" data-confirm-ok="Mở đợt" data-confirm-variant="primary"
                       data-confirm="Hệ thống sẽ chụp số tồn hiện tại và TẠM KHÓA việc nhận / xuất / gửi / giữ hàng của kho cho tới khi chốt đợt. Tiếp tục?">
                     <h3><i class="fas fa-clipboard-list"></i> Mở đợt kiểm kê mới</h3>
@@ -65,6 +68,18 @@ require __DIR__ . '/layout/header.php';
                         <div class="form-group" style="grid-column: span 2;">
                             <label for="countNote">Ghi chú</label>
                             <input class="form-control" id="countNote" name="note" maxlength="255" placeholder="Vd: Kiểm kê định kỳ cuối tháng 10">
+                        </div>
+                        <div class="form-group span-all">
+                            <label>Nhân viên đi kiểm kê * <span class="muted">(chỉ người được chọn và quản lý kho nhập được số đếm)</span></label>
+                            <div class="check-grid js-member-grid">
+                                <?php foreach ($candidates as $candidate): ?>
+                                    <label class="check-chip" data-warehouse="<?= (int) $candidate['warehouse_id'] ?>">
+                                        <input type="checkbox" name="members[]" value="<?= (int) $candidate['id'] ?>">
+                                        <span><?= e($candidate['full_name']) ?> <span class="muted">· <?= e(roleLabel($candidate['role'])) ?></span></span>
+                                    </label>
+                                <?php endforeach; ?>
+                            </div>
+                            <p class="form-hint js-member-empty" hidden>Kho này chưa có nhân viên nào được phân quyền: vào Tài khoản &amp; phân quyền kho để giao kho trước.</p>
                         </div>
                     </div>
                     <div class="form-actions" style="margin-top: 16px;">

@@ -19,7 +19,7 @@ $filters = [
 ];
 $sort       = readSort(ACCOUNT_SORT_COLUMNS, 'role');
 $modalState = takeModalState('account_modal');
-$secret     = $_SESSION['account_secret'] ?? null;      // mật khẩu tạm vừa sinh: hiện đúng 1 lần
+$secret     = $_SESSION['account_secret'] ?? null;
 unset($_SESSION['account_secret']);
 
 $accounts         = [];

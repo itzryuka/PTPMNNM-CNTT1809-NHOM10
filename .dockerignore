@@ -1,0 +1,9 @@
+# Không đưa vào image Docker
+.git
+.gitignore
+.claude
+.vscode
+docs
+*.md
+config/ai.local.php
+vendor

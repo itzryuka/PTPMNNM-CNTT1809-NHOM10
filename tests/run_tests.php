@@ -455,11 +455,16 @@ try {
 
     // Bước 2: quản lý mở đợt kiểm kê Kho ĐN -> chụp số tồn
     $dnRows  = (int) scalar('SELECT COUNT(*) FROM stocks WHERE warehouse_id = 3 AND quantity > 0');
-    $countId = createStockCount($pdo, $manager, 3, 'Kiểm kê sau khi nhận hàng điều chuyển');
+    $countId = createStockCount($pdo, $manager, 3, 'Kiểm kê sau khi nhận hàng điều chuyển', [$staffC['id']]);
     check('Mở đợt kiểm kê: chụp đủ mọi lô còn hàng của kho', (int) scalar('SELECT COUNT(*) FROM stock_count_lines WHERE count_id = ?', [$countId]) === $dnRows);
     check('Số tồn chụp lại = tồn hiện tại', (float) scalar('SELECT system_qty FROM stock_count_lines WHERE count_id = ? AND batch_id = ?', [$countId, $moveBatch]) == stockOf(3, $moveBatch));
-    check('Không mở được đợt thứ 2 cho cùng kho', str_contains(errorOf(fn () => createStockCount($pdo, $manager, 3, '')), 'chưa chốt'));
-    check('Nhân viên không được mở đợt kiểm kê', str_contains(errorOf(fn () => createStockCount($pdo, $staffC, 3, '')), 'Chỉ quản lý'));
+    check('Không mở được đợt thứ 2 cho cùng kho', str_contains(errorOf(fn () => createStockCount($pdo, $manager, 3, '', [$staffC['id']])), 'chưa chốt'));
+    check('Nhân viên không được mở đợt kiểm kê', str_contains(errorOf(fn () => createStockCount($pdo, $staffC, 3, '', [$staffC['id']])), 'Chỉ quản lý'));
+    check('Mở đợt phải chọn ít nhất 1 nhân viên (không tạo đợt dở)',
+        str_contains(errorOf(fn () => createStockCount($pdo, $manager, 1, '', [])), 'ít nhất 1') && getOpenStockCounts($pdo, [1]) === []);
+    check('Không chọn được nhân viên không phụ trách kho đó',
+        str_contains(errorOf(fn () => createStockCount($pdo, $manager, 1, '', [$staffC['id']])), 'không thuộc kho') && getOpenStockCounts($pdo, [1]) === []);
+    check('Đợt ghi đúng danh sách nhân viên được chọn', getStockCountMemberIds($pdo, $countId) === [(int) $staffC['id']]);
 
     // Kho đang kiểm kê: duyệt phiếu nhập vẫn được (chưa đụng tồn) nhưng không nhận hàng vào kho được
     $dnImport = createVoucher($pdo, $staffC, [
@@ -489,19 +494,49 @@ try {
     }
     check('Nhân viên kho khác (HN) không nhập được số đếm kho ĐN',
         str_contains(errorOf(fn () => saveStockCountEntries($pdo, $staffA, $countId, $entries)), 'không có quyền'));
-    saveStockCountEntries($pdo, $staffC, $countId, $entries);
+    check('Dòng lệch phải có lý do ngay khi lưu (lưu xong là khóa)',
+        str_contains(errorOf(fn () => saveStockCountEntries($pdo, $staffC, $countId, $entries)), 'phải nhập lý do')
+        && (int) scalar('SELECT COUNT(*) FROM stock_count_lines WHERE count_id = ? AND counted_qty IS NOT NULL', [$countId]) === 0);
+    $moveLineId = (int) array_values(array_filter($lines, fn ($l) => (int) $l['batch_id'] === $moveBatch))[0]['id'];
+    $entries[$moveLineId]['reason']      = 'Mất 2 khi bốc xếp';
+    $entries[$plusLine['id']]['reason'] = 'Hàng dư chưa ghi sổ';
+
+    // Nhiều người cùng đếm: nhân viên ĐN đếm 2 dòng lệch trước, quản lý đếm phần còn lại
+    $staffPart   = array_intersect_key($entries, [$moveLineId => 1, $plusLine['id'] => 1]);
+    $managerPart = array_diff_key($entries, $staffPart);
+    $saved = saveStockCountEntries($pdo, $staffC, $countId, $staffPart);
+    check('Nhân viên lưu phần mình đếm: 2 dòng, ghi tên người đếm', $saved === ['saved' => 2, 'conflicts' => []]
+        && (int) scalar('SELECT counted_by FROM stock_count_lines WHERE id = ?', [$moveLineId]) === (int) $staffC['id']);
+    $overwrite = [$moveLineId => ['counted_qty' => '999', 'reason' => 'ghi đè']] + $managerPart;
+    $saved = saveStockCountEntries($pdo, $manager, $countId, $overwrite);
+    check('Dòng đã có người đếm bị khóa: người khác không ghi đè được, phần còn lại vẫn lưu',
+        count($saved['conflicts']) === 1 && str_contains($saved['conflicts'][0], 'không được ghi') && $saved['saved'] === count($managerPart)
+        && (float) scalar('SELECT counted_qty FROM stock_count_lines WHERE id = ?', [$moveLineId]) == (float) $entries[$moveLineId]['counted_qty']
+        && (int) scalar('SELECT counted_by FROM stock_count_lines WHERE id = ?', [$moveLineId]) === (int) $staffC['id']);
+    check('Người đã đếm cũng không tự sửa được dòng đã khóa',
+        count(saveStockCountEntries($pdo, $staffC, $countId, [$moveLineId => ['counted_qty' => '1', 'reason' => 'x']])['conflicts']) === 1);
+    check('Gửi lại đúng số đã lưu (trang chưa tải lại) thì không báo trùng',
+        saveStockCountEntries($pdo, $staffC, $countId, $staffPart) === ['saved' => 0, 'conflicts' => []]);
     $diffs = $pdo->prepare('SELECT batch_id, difference FROM stock_count_lines WHERE count_id = ? AND difference <> 0 ORDER BY batch_id');
     $diffs->execute([$countId]);
     $diffs = array_column($diffs->fetchAll(), 'difference', 'batch_id');
     check('Hệ thống tính chênh lệch = đếm − tồn hệ thống (−2 và +1)',
         count($diffs) === 2 && (float) $diffs[$moveBatch] == -2.0 && (float) $diffs[$plusLine['batch_id']] == 1.0);
+    $states = getStockCountLineStates($pdo, $countId);
+    check('Trạng thái dòng cho trang tự cập nhật: đã khóa, người đếm, có lệch',
+        $states[$moveLineId]['counted'] && $states[$moveLineId]['mismatch'] && $states[$moveLineId]['by'] === $staffC['full_name']);
 
-    // Bước 4: dòng lệch chưa có lý do -> không duyệt được; bổ sung lý do rồi duyệt
+    // Mở khóa dòng nhập nhầm: chỉ quản lý kho
+    check('Nhân viên không mở khóa được dòng đã đếm', str_contains(errorOf(fn () => unlockStockCountLine($pdo, $staffC, $countId, (int) $plusLine['id'])), 'Chỉ quản lý'));
+    unlockStockCountLine($pdo, $manager, $countId, (int) $plusLine['id']);
+    check('Quản lý mở khóa: dòng về chưa đếm', scalar('SELECT counted_qty FROM stock_count_lines WHERE id = ?', [$plusLine['id']]) === null);
+    check('Đếm lại dòng vừa mở khóa', saveStockCountEntries($pdo, $staffC, $countId, [$plusLine['id'] => $entries[$plusLine['id']]])['saved'] === 1);
+
+    // Bước 4: chốt chặn khi duyệt (dữ liệu sửa thẳng CSDL thiếu lý do) + lý do chung bắt buộc
+    $pdo->prepare('UPDATE stock_count_lines SET reason = NULL WHERE id = ?')->execute([$moveLineId]);
     check('Dòng lệch chưa có lý do thì không duyệt được', str_contains(errorOf(fn () => approveStockCount($pdo, $manager, $countId, 'Điều chỉnh')), 'chưa có lý do'));
+    $pdo->prepare('UPDATE stock_count_lines SET reason = ? WHERE id = ?')->execute([$entries[$moveLineId]['reason'], $moveLineId]);
     check('Thiếu lý do điều chỉnh chung thì không duyệt được', str_contains(errorOf(fn () => approveStockCount($pdo, $manager, $countId, '  ')), 'lý do'));
-    $entries[array_values(array_filter($lines, fn ($l) => (int) $l['batch_id'] === $moveBatch))[0]['id']]['reason'] = 'Mất 2 khi bốc xếp';
-    $entries[$plusLine['id']]['reason'] = 'Hàng dư chưa ghi sổ';
-    saveStockCountEntries($pdo, $staffC, $countId, $entries);
     check('Nhân viên không duyệt được đợt kiểm kê', str_contains(errorOf(fn () => approveStockCount($pdo, $staffC, $countId, 'x')), 'Chỉ quản lý'));
 
     $before       = movementCount();
@@ -535,15 +570,26 @@ try {
     check('Chốt đợt xong kho mở khóa: nhận hàng vào kho được', errorOf(fn () => receiveAll($pdo, $staffC, $dnImport)) === '' && voucherStatus($dnImport) === 'COMPLETED');
 
     // Đợt không có chênh lệch: duyệt xong không sinh phiếu, không ghi phát sinh
-    $cleanId = createStockCount($pdo, $manager, 2, 'Kiểm kê không lệch');
+    // (kèm phép thử danh sách nhân viên: chỉ người được chọn + quản lý nhập số đếm được)
+    $cleanId = createStockCount($pdo, $manager, 2, 'Kiểm kê không lệch', [$manager['id']]);
     $clean = $pdo->prepare('SELECT id, system_qty FROM stock_count_lines WHERE count_id = ?');
     $clean->execute([$cleanId]);
-    saveStockCountEntries($pdo, $manager, $cleanId, array_map(fn ($r) => ['counted_qty' => $r['system_qty'], 'reason' => ''], array_column($clean->fetchAll(), null, 'id')));
+    $cleanEntries = array_map(fn ($r) => ['counted_qty' => $r['system_qty'], 'reason' => ''], array_column($clean->fetchAll(), null, 'id'));
+    $firstLine    = array_slice($cleanEntries, 0, 1, true);
+    check('Nhân viên kho không có tên trong đợt thì không nhập số đếm được',
+        str_contains(errorOf(fn () => saveStockCountEntries($pdo, $staffB, $cleanId, $firstLine)), 'không có trong danh sách'));
+    check('Nhân viên không đổi được danh sách kiểm kê',
+        str_contains(errorOf(fn () => updateStockCountMembers($pdo, $staffB, $cleanId, [$staffB['id']])), 'Chỉ quản lý'));
+    updateStockCountMembers($pdo, $manager, $cleanId, [$staffB['id']]);
+    check('Quản lý thêm nhân viên vào đợt (bỏ người cũ): nhân viên nhập được',
+        getStockCountMemberIds($pdo, $cleanId) === [(int) $staffB['id']] && saveStockCountEntries($pdo, $staffB, $cleanId, $firstLine)['saved'] === 1);
+    check('Danh sách nhân viên kèm số dòng mỗi người đã đếm', (int) getStockCountMembers($pdo, $cleanId)[0]['counted_lines'] === 1);
+    check('Quản lý kho không cần có tên trong đợt vẫn đếm được', saveStockCountEntries($pdo, $manager, $cleanId, $cleanEntries)['saved'] === count($cleanEntries) - 1);
     $before = movementCount();
     check('Không có chênh lệch: duyệt không sinh phiếu điều chỉnh', approveStockCount($pdo, $manager, $cleanId, 'Khớp') === null && movementCount() === $before);
 
     // Hủy đợt: không phát sinh, mở khóa kho
-    $cancelId = createStockCount($pdo, $manager, 2, 'Sẽ hủy');
+    $cancelId = createStockCount($pdo, $manager, 2, 'Sẽ hủy', [$staffB['id']]);
     cancelStockCount($pdo, $manager, $cancelId);
     check('Hủy đợt kiểm kê: CANCELLED, kho mở khóa', scalar('SELECT status FROM stock_counts WHERE id = ?', [$cancelId]) === 'CANCELLED'
         && getOpenStockCounts($pdo, [2]) === []);
@@ -1031,7 +1077,7 @@ try {
     check('Quản lý kho HN/HCM không duyệt được phiếu kho ĐN', str_contains(errorOf(fn () => approveVoucher($pdo, $hnManager, $dnVoucher)), 'không có quyền')
         && scalar('SELECT status FROM vouchers WHERE id = ?', [$dnVoucher]) === 'PENDING');
     check('Quản lý kho HN/HCM không từ chối được phiếu kho ĐN', str_contains(errorOf(fn () => rejectVoucher($pdo, $hnManager, $dnVoucher)), 'không có quyền'));
-    check('Quản lý kho HN/HCM không mở kiểm kê kho ĐN', str_contains(errorOf(fn () => createStockCount($pdo, $hnManager, 3, '')), 'không có quyền'));
+    check('Quản lý kho HN/HCM không mở kiểm kê kho ĐN', str_contains(errorOf(fn () => createStockCount($pdo, $hnManager, 3, '', [$staffC['id']])), 'không có quyền'));
     check('Quản lý kho HN/HCM không sửa được thông tin kho ĐN',
         str_contains(errorOf(fn () => updateWarehouse($pdo, $hnManager, 3, ['code' => $dn['code'], 'name' => 'X'])), 'không có quyền'));
     rejectVoucher($pdo, $manager, $dnVoucher);

@@ -60,6 +60,17 @@ try {
     error_log('[chat] ' . ($e->type?->value ?? '') . ' ' . $e->getMessage());
     $busy = in_array($e->type?->value, ['rate_limit_error', 'overloaded_error'], true);
     chatJson(502, ['error' => $busy ? 'Trợ lý đang quá tải, bạn thử lại sau ít phút.' : 'Trợ lý gặp lỗi khi gọi dịch vụ AI. Bạn thử lại sau.']);
+} catch (ChatServiceException $e) {
+    error_log('[chat] ' . $e->getMessage());
+    chatJson(502, ['error' => match (true) {
+        $e->getCode() === 429                       => 'Đã hết lượt miễn phí của Trợ lý AI trong lúc này, bạn thử lại sau ít phút (hoặc ngày mai).',
+        in_array($e->getCode(), [401, 403], true)   => 'API key của Trợ lý AI không hợp lệ hoặc chưa được bật. Kiểm tra lại config/ai.local.php.',
+        $e->getCode() === 400                       => 'Trợ lý gửi yêu cầu không hợp lệ tới dịch vụ AI. Bấm "làm mới" khung chat rồi hỏi lại.',
+        $e->getCode() === 404                       => 'Tên model AI trong cấu hình không tồn tại. Kiểm tra "gemini_model" trong config/ai.local.php.',
+        $e->getCode() === 504                       => 'Trợ lý AI phản hồi quá lâu, bạn thử lại hoặc hỏi ngắn gọn hơn.',
+        $e->getCode() >= 500                        => 'Dịch vụ AI đang quá tải, bạn thử lại sau ít phút.',
+        default                                     => 'Không kết nối được dịch vụ AI. Bạn thử lại sau.',
+    }]);
 } catch (Throwable $e) {
     error_log('[chat] ' . get_class($e) . ': ' . $e->getMessage());
     chatJson(500, ['error' => 'Trợ lý gặp lỗi, bạn thử lại sau.']);

@@ -400,6 +400,19 @@ CREATE TABLE stock_count_lines (
   CONSTRAINT ck_scl_counted CHECK (counted_qty IS NULL OR counted_qty >= 0)
 ) ENGINE=InnoDB;
 
+-- Nhân viên được quản lý chọn đi kiểm kê khi mở đợt: chỉ họ (và quản lý kho) nhập số đếm được
+CREATE TABLE stock_count_members (
+  count_id     INT UNSIGNED NOT NULL,
+  user_id      INT UNSIGNED NOT NULL,
+  added_by     INT UNSIGNED NOT NULL,
+  added_at     DATETIME     NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  PRIMARY KEY (count_id, user_id),
+  KEY idx_scm_user (user_id),
+  CONSTRAINT fk_scm_count FOREIGN KEY (count_id) REFERENCES stock_counts(id) ON DELETE CASCADE,
+  CONSTRAINT fk_scm_user  FOREIGN KEY (user_id)  REFERENCES users(id),
+  CONSTRAINT fk_scm_adder FOREIGN KEY (added_by) REFERENCES users(id)
+) ENGINE=InnoDB;
+
 -- =====================================================================
 -- 7. TRIGGER BẢO VỆ TÍNH TOÀN VẸN
 -- =====================================================================
@@ -2630,6 +2643,7 @@ INSERT INTO stock_count_lines (count_id, item_id, batch_id, system_qty, counted_
 (1, 29, 51, 126, 126, NULL, 4, '2026-10-10 15:00:00'),
 (1, 30, 52, 301, 301, NULL, 4, '2026-10-10 15:00:00'),
 (1, 30, 53, 109, 109, NULL, 4, '2026-10-10 15:00:00');
+INSERT INTO stock_count_members (count_id, user_id, added_by, added_at) VALUES (1, 4, 4, '2026-10-10 07:30:00');
 
 INSERT INTO vouchers (id, code, type, warehouse_id, to_warehouse_id, reference_voucher_id, voucher_date, reason, created_by, created_at)
 VALUES (69, 'DC-2026-0002', 'ADJUSTMENT', 2, NULL, NULL, '2026-10-11', 'Điều chỉnh chênh lệch theo kiểm kê KK-2026-0001', 4, '2026-10-11 08:00:00');

@@ -392,6 +392,19 @@ CREATE TABLE stock_count_lines (
   CONSTRAINT ck_scl_counted CHECK (counted_qty IS NULL OR counted_qty >= 0)
 ) ENGINE=InnoDB;
 
+-- Nhân viên được quản lý chọn đi kiểm kê khi mở đợt: chỉ họ (và quản lý kho) nhập số đếm được
+CREATE TABLE stock_count_members (
+  count_id     INT UNSIGNED NOT NULL,
+  user_id      INT UNSIGNED NOT NULL,
+  added_by     INT UNSIGNED NOT NULL,
+  added_at     DATETIME     NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  PRIMARY KEY (count_id, user_id),
+  KEY idx_scm_user (user_id),
+  CONSTRAINT fk_scm_count FOREIGN KEY (count_id) REFERENCES stock_counts(id) ON DELETE CASCADE,
+  CONSTRAINT fk_scm_user  FOREIGN KEY (user_id)  REFERENCES users(id),
+  CONSTRAINT fk_scm_adder FOREIGN KEY (added_by) REFERENCES users(id)
+) ENGINE=InnoDB;
+
 -- =====================================================================
 -- 7. TRIGGER BẢO VỆ TÍNH TOÀN VẸN
 -- =====================================================================
