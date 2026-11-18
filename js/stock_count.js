@@ -43,6 +43,9 @@ document.querySelectorAll('.js-member-grid').forEach(grid => {
     const rows = [...form.querySelectorAll('.js-count-row')];
     const hint = document.getElementById('dirtyHint');
     const progress = document.getElementById('countProgress');
+    const barFill = document.getElementById('countBarFill');
+    const barText = document.getElementById('countBarText');
+    const filterTodo = document.getElementById('countFilterTodo');
     const pollUrl = form.dataset.poll;
     const canUnlock = form.dataset.canUnlock === '1';
     const csrf = form.querySelector('[name="csrf_token"]').value;
@@ -252,6 +255,35 @@ document.querySelectorAll('.js-member-grid').forEach(grid => {
             }
         });
         if (progress) progress.textContent = `Đã đếm ${counted} / ${rows.length} dòng · ${mismatched} dòng lệch`;
+        if (barFill) barFill.style.width = `${rows.length ? Math.round(counted * 100 / rows.length) : 0}%`;
+        if (barText) barText.innerHTML = `<strong>${counted}</strong> / ${rows.length} dòng đã đếm`;
+        rows.forEach(row => {
+            const state = lines[row.dataset.line];
+            if (state) row.dataset.counted = state.counted ? '1' : '';
+        });
+        applyFilter();
+    }
+
+    const isDirtySafe = row => !!qtyInput(row) && isDirty(row);
+
+    // "Chỉ dòng chưa đếm": ẩn dòng đã có số (trừ dòng đang gõ / đang sửa dở để không mất chỗ đang nhập)
+    function applyFilter() {
+        const only = filterTodo?.checked;
+        let shown = 0;
+        rows.forEach(row => {
+            const hide = only && row.dataset.counted === '1' && !row.contains(document.activeElement) && !isDirtySafe(row);
+            row.hidden = !!hide;
+            if (!hide) shown++;
+        });
+        form.querySelector('.count-empty')?.remove();
+        if (only && shown === 0) {
+            const tbody = rows[0]?.parentElement;
+            tbody?.insertAdjacentHTML('beforeend', `<tr class="count-empty"><td colspan="8" class="muted text-center"><i class="fas fa-check-circle"></i> Đã đếm hết tất cả các dòng.</td></tr>`);
+        }
+    }
+    if (filterTodo) {
+        rows.forEach(row => { row.dataset.counted = row.classList.contains('row-locked') || isOwnSaved(row) ? '1' : ''; });
+        filterTodo.addEventListener('change', applyFilter);
     }
 
     async function post(action, fields) {

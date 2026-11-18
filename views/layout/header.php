@@ -70,7 +70,7 @@ function menuHref(string $href, string $basePath): string
 <html lang="vi">
 <head>
     <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
     <title><?= e($pageTitle) ?> · <?= APP_NAME ?></title>
     <link rel="icon" type="image/svg+xml" href="<?= e(asset($basePath, 'images/logo.svg')) ?>">
     <link href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.0.0/css/all.min.css" rel="stylesheet">

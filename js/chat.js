@@ -97,7 +97,81 @@
         }
     }
 
-    fab.addEventListener('click', () => toggle(panel.hidden));
+    // ===== Điện thoại: nút trợ lý là bong bóng tròn kéo thả được =====
+    // Kéo tới đâu thả ra thì bong bóng tự dạt vào mép trái / phải gần nhất (không che giữa màn hình),
+    // vị trí được nhớ trong trình duyệt. Chạm nhẹ (không kéo) = mở khung chat.
+    const mobile = window.matchMedia('(max-width: 768px)');
+    const POS_KEY = 'omnistock.chatBubble';
+    const EDGE = 10;                                         // khoảng cách tới mép màn hình
+    let drag = null;
+    let justDragged = false;
+
+    function clampBubble(x, y) {
+        const size = fab.offsetWidth;
+        const tabBar = document.querySelector('.bottom-nav')?.getBoundingClientRect().height || 0;   // thanh tab dưới (0 nếu ẩn)
+        return [
+            Math.min(Math.max(x, EDGE), window.innerWidth - size - EDGE),
+            Math.min(Math.max(y, EDGE + 56), window.innerHeight - tabBar - size - EDGE),   // không đè thanh trên / thanh tab dưới
+        ];
+    }
+
+    function placeBubble(x, y) {
+        [x, y] = clampBubble(x, y);
+        fab.style.left = `${x}px`;
+        fab.style.top = `${y}px`;
+        fab.style.right = fab.style.bottom = 'auto';
+    }
+
+    function restoreBubble() {
+        if (!mobile.matches) {
+            fab.style.left = fab.style.top = fab.style.right = fab.style.bottom = '';   // máy tính: tab mép phải như cũ
+            return;
+        }
+        let saved = null;
+        try { saved = JSON.parse(localStorage.getItem(POS_KEY) || 'null'); } catch (e) {}
+        if (!saved) return;                                  // chưa kéo lần nào: góc dưới phải (CSS)
+        const size = fab.offsetWidth;
+        placeBubble(saved.side === 'left' ? EDGE : window.innerWidth - size - EDGE, saved.ratio * window.innerHeight);
+    }
+
+    fab.addEventListener('pointerdown', event => {
+        if (!mobile.matches || event.button > 0) return;
+        const rect = fab.getBoundingClientRect();
+        drag = { id: event.pointerId, dx: event.clientX - rect.left, dy: event.clientY - rect.top, x0: event.clientX, y0: event.clientY, moved: false };
+        fab.setPointerCapture(event.pointerId);
+    });
+    fab.addEventListener('pointermove', event => {
+        if (!drag || event.pointerId !== drag.id) return;
+        if (!drag.moved && Math.hypot(event.clientX - drag.x0, event.clientY - drag.y0) < 6) return;   // rung tay khi chạm: chưa tính là kéo
+        drag.moved = true;
+        fab.classList.add('dragging');
+        placeBubble(event.clientX - drag.dx, event.clientY - drag.dy);
+    });
+    function endDrag(event) {
+        if (!drag || event.pointerId !== drag.id) return;
+        const moved = drag.moved;
+        drag = null;
+        fab.classList.remove('dragging');
+        if (!moved) return;
+        justDragged = true;                                  // nhả tay sau khi kéo: không tính là bấm mở chat
+        const rect = fab.getBoundingClientRect();
+        const side = rect.left + rect.width / 2 < window.innerWidth / 2 ? 'left' : 'right';
+        placeBubble(side === 'left' ? EDGE : window.innerWidth - rect.width - EDGE, rect.top);
+        try { localStorage.setItem(POS_KEY, JSON.stringify({ side, ratio: rect.top / window.innerHeight })); } catch (e) {}
+    }
+    fab.addEventListener('pointerup', endDrag);
+    fab.addEventListener('pointercancel', endDrag);
+    window.addEventListener('resize', restoreBubble);
+    mobile.addEventListener('change', restoreBubble);
+    restoreBubble();
+
+    fab.addEventListener('click', () => {
+        if (justDragged) {
+            justDragged = false;
+            return;
+        }
+        toggle(panel.hidden);
+    });
     panel.querySelector('.js-chat-close').addEventListener('click', () => toggle(false));
     panel.querySelector('.js-chat-reset').addEventListener('click', async () => {
         if (busy) return;
@@ -138,5 +212,6 @@
     }
     let wasOpen = false;
     try { wasOpen = sessionStorage.getItem(OPEN_KEY) === '1'; } catch (e) {}
-    if (wasOpen) toggle(true, false);   // mở lại nhưng không giành con trỏ khỏi ô nhập của trang
+    // Mở lại nhưng không giành con trỏ khỏi ô nhập của trang. Điện thoại thì không tự mở (khung chat che hết màn hình)
+    if (wasOpen && !mobile.matches) toggle(true, false);
 })();

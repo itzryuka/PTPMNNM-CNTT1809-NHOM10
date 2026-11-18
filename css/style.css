@@ -999,3 +999,157 @@ tfoot td { font-weight: 700; background: var(--bg-table-head); }
 .chat-note { padding: 0 12px 8px; font-size: 11px; color: #94a3b8; background: #fff; }
 @media (max-width: 600px) { .chat-panel { right: 46px; height: calc(100vh - 40px); max-width: calc(100vw - 56px); } }
 @media (prefers-reduced-motion: reduce) { .chat-panel { animation: none; } }
+
+/* Kiểm kê: thanh tiến độ dính trên đầu vùng cuộn + lọc dòng chưa đếm */
+.count-bar { position: sticky; top: 0; z-index: 5; display: flex; align-items: center; gap: 12px; flex-wrap: wrap; margin-top: 20px; padding: 10px 14px;
+    background: #fff; border: 1px solid var(--border-color); border-radius: 10px; box-shadow: 0 4px 12px rgba(15, 23, 42, .06); }
+.count-bar-track { flex: 1 1 160px; height: 8px; background: #e2e8f0; border-radius: 99px; overflow: hidden; }
+.count-bar-fill { height: 100%; background: linear-gradient(90deg, #22c55e, #16a34a); border-radius: inherit; transition: width .3s ease; }
+.count-bar-text { font-size: 13.5px; color: #334155; white-space: nowrap; }
+.count-filter { display: inline-flex; align-items: center; gap: 6px; font-size: 13.5px; color: #334155; cursor: pointer; user-select: none; white-space: nowrap; }
+.count-filter input { width: 16px; height: 16px; accent-color: var(--btn-export); }
+.count-table tr.count-empty td { padding: 22px; }
+.count-table tr.js-count-row[hidden] { display: none !important; }
+
+/* =====================================================================
+   ĐIỆN THOẠI (màn hình ≤ 768px). Chỉ thêm luật trong @media: giao diện máy tính giữ nguyên.
+   - Thanh menu trái thành ngăn kéo (ẩn, bấm ☰ mới trượt ra, có nền mờ phía sau) -> js/main.js
+   - Nội dung dùng hết bề ngang: form 1 cột, thanh lọc xếp chồng, bảng cuộn ngang trong khung
+   - Trợ lý AI là bong bóng tròn kéo thả được, khung chat mở toàn màn hình -> js/chat.js
+   - Trang nhập kiểm kê: mỗi dòng thành 1 thẻ
+   ===================================================================== */
+.sidebar-backdrop, .bottom-nav { display: none; }
+@media (max-width: 768px) {
+    /* Thanh tab dưới cùng kiểu app; chừa vùng an toàn của iPhone (thanh vuốt) */
+    .bottom-nav { display: grid; grid-template-columns: repeat(5, minmax(0, 1fr)); position: fixed; left: 0; right: 0; bottom: 0; z-index: 950;
+        height: calc(62px + env(safe-area-inset-bottom)); padding-bottom: env(safe-area-inset-bottom);
+        background: rgba(255, 255, 255, .97); border-top: 1px solid var(--border-color); box-shadow: 0 -4px 18px rgba(15, 23, 42, .06);
+        backdrop-filter: blur(8px); }
+    .bottom-nav a, .bottom-nav button { display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 3px;
+        border: none; background: none; color: #64748b; text-decoration: none; font: inherit; font-size: 11px; font-weight: 500; cursor: pointer;
+        -webkit-tap-highlight-color: transparent; }
+    .bottom-nav i { font-size: 19px; }
+    .bottom-nav .current { color: var(--btn-primary); font-weight: 600; }
+    .bottom-nav a:active i, .bottom-nav button:active i { transform: scale(.9); }
+    /* Nút giữa nổi lên (Kiểm kê) */
+    .bottom-nav-main { position: relative; }
+    .bottom-nav-bubble { position: relative; display: flex; align-items: center; justify-content: center; width: 50px; height: 50px; margin-top: -24px;
+        border-radius: 50%; background: var(--btn-primary); color: #fff; border: 4px solid #fff; box-shadow: 0 6px 16px rgba(79, 70, 229, .4); }
+    .bottom-nav-main .bottom-nav-bubble i { font-size: 20px; }
+    .bottom-nav-main.current .bottom-nav-bubble { background: var(--btn-primary-hover); }
+    .bottom-nav-badge { position: absolute; top: -4px; right: -6px; min-width: 18px; height: 18px; padding: 0 5px; border-radius: 9px;
+        background: #ef4444; color: #fff; font-size: 10.5px; font-weight: 700; line-height: 18px; text-align: center; border: 2px solid #fff; }
+
+    /* Menu trái: ngăn kéo */
+    .sidebar, .sidebar.collapsed { position: fixed; top: 0; bottom: 0; left: 0; z-index: 1001; width: 272px;
+        transform: translateX(-100%); transition: transform .25s ease; }
+    .sidebar.collapsed .brand-name, .sidebar.collapsed .menu-text, .sidebar.collapsed .arrow { display: initial; }
+    body.nav-open .sidebar { transform: none; box-shadow: 8px 0 32px rgba(15, 23, 42, .35); }
+    .sidebar-backdrop { display: block; position: fixed; inset: 0; z-index: 1000; background: rgba(15, 23, 42, .45);
+        opacity: 0; pointer-events: none; transition: opacity .2s; }
+    body.nav-open .sidebar-backdrop { opacity: 1; pointer-events: auto; }
+
+    /* Thanh trên + vùng nội dung */
+    .top-navbar { height: 56px; padding: 0 12px; gap: 10px; }
+    .page-title-nav { font-size: 16px; }
+    .nav-right { gap: 14px; }
+    .content-body { padding: 14px 12px calc(96px + env(safe-area-inset-bottom)); }   /* chừa đáy cho thanh tab + bong bóng */
+
+    /* Form, thông tin: 1 cột; ô nhập chữ 16px để iPhone không tự phóng to */
+    .form-grid, .detail-grid { grid-template-columns: minmax(0, 1fr); }
+    .form-grid > *, .detail-grid > * { grid-column: auto !important; }
+    input.form-control, select.form-control, textarea.form-control, .filter-select, .search-box input { font-size: 16px; }
+    .form-card, .toolbar { padding: 14px; }
+    .form-actions { flex-wrap: wrap; }
+    .form-actions > .btn, .form-actions > form, .form-actions > a { flex: 1 1 auto; justify-content: center; }
+    .form-actions > .muted { flex-basis: 100%; }
+
+    /* Thanh công cụ / lọc: xếp chồng, ô tìm kiếm rộng hết */
+    .toolbar-top, .toolbar-bottom, .toolbar-bottom-right { flex-wrap: wrap; }
+    .toolbar-bottom-right { width: 100%; gap: 8px; }
+    .toolbar-bottom-right .filter-select { flex: 1 1 140px; min-width: 0; }
+    .search-box { flex: 1 1 100%; }
+    .search-box input { flex: 1; min-width: 0; }
+    .date-range { flex-wrap: wrap; }
+
+    /* Lưới bảng điều khiển / thẻ thống kê */
+    .dash-grid { grid-template-columns: minmax(0, 1fr); }
+    .summary-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+    .summary-card .value { font-size: 19px; }
+
+    /* Bảng: cuộn ngang trong khung, không đẩy cả trang */
+    .table-container { overflow-x: auto; -webkit-overflow-scrolling: touch; }
+    .pagination-container { flex-wrap: wrap; gap: 10px; padding: 10px 12px; justify-content: center; }
+
+    /* Popup: gần toàn màn hình */
+    .modal-backdrop { padding: 8px; }
+    .modal { max-height: calc(100vh - 16px); }
+
+    /* Đợt kiểm kê: thẻ đợt đang mở, nút rộng hết */
+    .join-card .btn, .open-count-card .btn, .open-count-card form { width: 100%; justify-content: center; }
+
+    /* --- Trang nhập kiểm kê: mỗi dòng 1 thẻ --- */
+    .count-table { overflow: visible !important; }
+    .count-table table, .count-table tbody { display: block; }
+    .count-table thead { display: none; }
+    .count-table tr.js-count-row { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); gap: 8px 12px;
+        margin: 0 10px 10px; padding: 12px; border: 1px solid var(--border-color); border-radius: 10px; background: #fff; }
+    .count-table tbody { padding-top: 10px; }
+    .count-table tr.js-count-row td { display: block; padding: 0; border: none; white-space: normal; text-align: left; }
+    .count-table tr.js-count-row td::before { content: attr(data-label); display: block; font-size: 11.5px; color: #64748b; margin-bottom: 2px; }
+    .count-table tr.js-count-row td:nth-child(1) { display: none; }
+    .count-table tr.js-count-row td:nth-child(2) { grid-column: 1 / -1; font-weight: 600; font-size: 15px; }
+    .count-table tr.js-count-row td:nth-child(2)::before,
+    .count-table tr.js-count-row td:nth-child(8)::before { display: none; }
+    .count-table tr.js-count-row td:nth-child(7), .count-table tr.js-count-row td:nth-child(8) { grid-column: 1 / -1; }
+    .count-table tr.js-count-row td:nth-child(8):has(> .muted:only-child) { display: none; }   /* chưa ai nhập: bỏ dòng trống */
+    .count-table .form-control { min-width: 0; width: 100%; height: 42px; }
+    .count-table .js-counted { font-size: 18px; font-weight: 600; }
+    .count-table tr.has-diff, .count-table tr.row-locked, .count-table tr.row-saved,
+    .count-table tr.row-claimed, .count-table tr.row-mine, .count-table tr.row-conflict { border-width: 1px 1px 1px 4px; }
+    .count-table tr.row-locked, .count-table tr.row-saved { border-left-color: #94a3b8; }
+    .count-table tr.row-claimed { border-left-color: #3b82f6; }
+    .count-table tr.row-mine { border-left-color: #22c55e; }
+    .count-table tr.has-diff { border-left-color: #f59e0b; }
+    #countProgress { font-weight: 600; }
+
+    /* --- Lập phiếu / yêu cầu điều chuyển: mỗi dòng hàng 1 thẻ (ô chọn rộng hết, khỏi cuộn ngang) --- */
+    .line-table { overflow: visible !important; box-shadow: none; background: transparent; border: none; }
+    .line-table table, .line-table tbody { display: block; }
+    .line-table thead { display: none; }
+    .line-table tbody tr { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 10px 12px; align-items: end;
+        padding: 12px; margin-bottom: 10px; background: #fff; border: 1px solid #e2e8f0; border-radius: 12px; }
+    .line-table tbody td { display: block; padding: 0; border: none; min-width: 0; }
+    .line-table .form-control { width: 100%; min-width: 0; height: 42px; }
+    .line-table tbody td::before { display: block; font-size: 11.5px; color: #64748b; margin-bottom: 4px; }
+    .line-table tbody td:nth-child(1) { grid-column: 1; grid-row: 1; align-self: center; font-weight: 600; color: #334155; }
+    .line-table tbody td:nth-child(1)::before { content: 'Dòng '; display: inline; font-size: inherit; color: inherit; margin: 0; }
+    .line-table tbody td:last-child { grid-column: 2; grid-row: 1; align-self: center; }
+    .line-table .js-remove { width: 36px; height: 36px; }
+    /* Phiếu: Mặt hàng, Lô hàng rộng hết; Số lượng + ĐVT chung 1 hàng */
+    #lineRows td:nth-child(2), #lineRows td:nth-child(3) { grid-column: 1 / -1; }
+    #lineRows td:nth-child(2)::before { content: 'Mặt hàng *'; }
+    #lineRows td:nth-child(3)::before { content: 'Lô hàng *'; }
+    #lineRows td:nth-child(4)::before { content: 'Số lượng *'; }
+    #lineRows td:nth-child(5) { min-width: 48px; padding-bottom: 11px; }
+    /* Yêu cầu điều chuyển: Mặt hàng, Số lượng, Có thể xuất ở các kho */
+    #requestLines td:nth-child(2), #requestLines td:nth-child(3), #requestLines td:nth-child(4) { grid-column: 1 / -1; }
+    #requestLines td:nth-child(2)::before { content: 'Mặt hàng *'; }
+    #requestLines td:nth-child(3)::before { content: 'Số lượng *'; }
+    #requestLines td:nth-child(4)::before { content: 'Có thể xuất ở các kho'; }
+    #requestLines td:nth-child(4):empty { display: none; }
+
+    /* --- Trợ lý AI: bong bóng tròn kéo thả được (vị trí do js/chat.js đặt), khung chat toàn màn hình --- */
+    .chat-fab { top: auto; right: 14px; bottom: calc(80px + env(safe-area-inset-bottom)); transform: none; width: 54px; height: 54px; padding: 0; border-radius: 50%;
+        justify-content: center; gap: 0; touch-action: none; user-select: none; -webkit-user-select: none;
+        box-shadow: 0 6px 18px rgba(79, 70, 229, .45); transition: box-shadow .15s, left .2s ease, top .2s ease; }
+    .chat-fab:hover, .chat-fab[aria-expanded="true"] { padding: 0; }
+    .chat-fab.dragging { transition: none; box-shadow: 0 10px 28px rgba(79, 70, 229, .55); cursor: grabbing; }
+    .chat-fab i { font-size: 22px; }
+    .chat-fab .chat-fab-label { display: none; }
+    body.nav-open .chat-fab { opacity: 0; pointer-events: none; }   /* mở menu thì bong bóng tạm ẩn */
+    .chat-fab .chat-beta { position: absolute; top: -4px; right: -6px; font-size: 8px; padding: 1px 4px; }
+    .chat-panel, .chat-panel[style] { inset: 0; width: 100%; max-width: none; height: 100%; max-height: none; border-radius: 0; border: none;
+        transform: none; animation: chat-up .2s ease-out; z-index: 1002; }
+    @keyframes chat-up { from { opacity: 0; transform: translateY(24px); } to { opacity: 1; transform: none; } }
+}

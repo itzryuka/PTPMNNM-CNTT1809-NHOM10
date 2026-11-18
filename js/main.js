@@ -1,7 +1,31 @@
 const toggleBtn = document.getElementById('toggleBtn');
 const sidebar = document.getElementById('sidebar');
 
+// Điện thoại (≤ 768px): thanh menu là ngăn kéo trượt ra từ trái, có nền mờ; máy tính: thu gọn / mở rộng như cũ
+const mobileQuery = window.matchMedia('(max-width: 768px)');
+const sidebarBackdrop = document.createElement('div');
+sidebarBackdrop.className = 'sidebar-backdrop';
+document.body.appendChild(sidebarBackdrop);
+
+function setNavOpen(open) {
+    document.body.classList.toggle('nav-open', open);
+    toggleBtn.setAttribute('aria-expanded', String(open));
+}
+sidebarBackdrop.addEventListener('click', () => setNavOpen(false));
+document.addEventListener('keydown', event => {
+    if (event.key === 'Escape' && document.body.classList.contains('nav-open')) setNavOpen(false);
+});
+sidebar.addEventListener('click', event => {
+    if (mobileQuery.matches && event.target.closest('a[href]')) setNavOpen(false);   // chọn trang -> đóng ngăn kéo
+});
+mobileQuery.addEventListener('change', () => setNavOpen(false));
+document.querySelector('.js-bottom-menu')?.addEventListener('click', () => setNavOpen(true));   // nút "Menu" ở thanh tab dưới
+
 toggleBtn.addEventListener('click', () => {
+    if (mobileQuery.matches) {
+        setNavOpen(!document.body.classList.contains('nav-open'));
+        return;
+    }
     sidebar.classList.toggle('collapsed');
     if(sidebar.classList.contains('collapsed')) {
         document.querySelectorAll('.menu-item').forEach(item => {
