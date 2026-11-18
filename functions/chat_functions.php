@@ -1,41 +1,56 @@
 <?php
-// TRỢ LÝ AI (BETA): hỏi đáp về số liệu kho bằng tiếng Việt, dùng Claude API (SDK chính thức anthropic-ai/sdk).
+// TRỢ LÝ AI (BETA): hỏi đáp về số liệu kho bằng tiếng Việt.
+// Chọn nhà cung cấp trong config/ai.local.php: 'gemini' (Google, có gói miễn phí, gọi thẳng bằng cURL)
+// hoặc 'claude' (Anthropic, trả phí, cần cài SDK: composer require anthropic-ai/sdk).
 // Bot CHỈ ĐỌC: không lập / duyệt / sửa phiếu. Số liệu lấy qua các hàm báo cáo sẵn có ("công cụ"),
 // luôn lọc theo kho user được phân quyền, nên nhân viên kho HN hỏi gì cũng chỉ thấy số của kho HN.
-// Cấu hình: config/ai.local.php (không đưa lên git) hoặc biến môi trường ANTHROPIC_API_KEY.
+// Cấu hình: config/ai.local.php (không đưa lên git) hoặc biến môi trường GEMINI_API_KEY / ANTHROPIC_API_KEY.
 // Cần nạp trước: helpers.php, auth.php, voucher_functions.php, report_functions.php, batch_functions.php, dashboard_functions.php
 
 const CHAT_DEFAULT_MODEL   = 'claude-opus-5-5';
+const GEMINI_DEFAULT_MODEL = 'gemini-3.5-flash-lite';   // có trong gói miễn phí của Gemini API
+const GEMINI_ENDPOINT      = 'https://generativelanguage.googleapis.com/v1beta/models/%s:generateContent';
 const CHAT_MAX_MESSAGE_LEN = 1000;
-const CHAT_HISTORY_TURNS   = 6;      // giữ 6 lượt hỏi - đáp gần nhất làm ngữ cảnh
-const CHAT_MAX_TOOL_ROUNDS = 6;      // tối đa số vòng gọi công cụ cho 1 câu hỏi
-const CHAT_RATE_LIMIT      = 15;     // số câu hỏi tối đa / 5 phút / phiên
-const CHAT_ROW_LIMIT       = 40;     // số dòng tối đa mỗi công cụ trả về
+const CHAT_HISTORY_TURNS   = 6;
+const CHAT_MAX_TOOL_ROUNDS = 6;
+const CHAT_RATE_LIMIT      = 15;
+const CHAT_ROW_LIMIT       = 40;
 
 if (is_file(__DIR__ . '/../vendor/autoload.php')) {
     require_once __DIR__ . '/../vendor/autoload.php';
 }
 
-/** ['api_key' => ..., 'model' => ...]; api_key rỗng = chưa cấu hình */
 function chatConfig(): array
 {
-    $config = is_file(__DIR__ . '/../config/ai.local.php') ? (array) require __DIR__ . '/../config/ai.local.php' : [];
+    $config   = is_file(__DIR__ . '/../config/ai.local.php') ? (array) require __DIR__ . '/../config/ai.local.php' : [];
+    $provider = (($config['provider'] ?? '') ?: (getenv('AI_PROVIDER') ?: 'gemini')) === 'claude' ? 'claude' : 'gemini';
+    if ($provider === 'gemini') {
+        return [
+            'provider' => 'gemini',
+            'api_key'  => (string) (($config['gemini_api_key'] ?? '') ?: (getenv('GEMINI_API_KEY') ?: '')),
+            'model'    => (string) (($config['gemini_model'] ?? '') ?: GEMINI_DEFAULT_MODEL),
+        ];
+    }
     return [
-        'api_key' => (string) ($config['api_key'] ?? getenv('ANTHROPIC_API_KEY') ?: ''),
-        'model'   => (string) ($config['model'] ?? CHAT_DEFAULT_MODEL),
+        'provider' => 'claude',
+        'api_key'  => (string) (($config['api_key'] ?? '') ?: (getenv('ANTHROPIC_API_KEY') ?: '')),
+        'model'    => (string) (($config['model'] ?? '') ?: CHAT_DEFAULT_MODEL),
     ];
 }
 
-/** Lý do chưa dùng được (null = sẵn sàng) */
 function chatUnavailableReason(): ?string
 {
+    $config = chatConfig();
+    if ($config['provider'] === 'gemini') {
+        if (!function_exists('curl_init')) {
+            return 'Máy chủ chưa bật extension cURL của PHP (cần cho Trợ lý AI).';
+        }
+        return $config['api_key'] === '' ? 'Trợ lý AI chưa có Gemini API key: điền "gemini_api_key" trong config/ai.local.php.' : null;
+    }
     if (!class_exists(\Anthropic\Client::class)) {
-        return 'Trợ lý AI chưa được cài: cần chạy "composer require anthropic-ai/sdk" trong thư mục dự án.';
+        return 'Trợ lý AI (Claude) chưa được cài: cần chạy "composer require anthropic-ai/sdk" trong thư mục dự án.';
     }
-    if (chatConfig()['api_key'] === '') {
-        return 'Trợ lý AI chưa được cấu hình API key (config/ai.local.php hoặc biến môi trường ANTHROPIC_API_KEY).';
-    }
-    return null;
+    return $config['api_key'] === '' ? 'Trợ lý AI chưa có Claude API key: điền "api_key" trong config/ai.local.php.' : null;
 }
 
 function chatSystemPrompt(PDO $pdo, array $user): string
@@ -53,7 +68,6 @@ function chatSystemPrompt(PDO $pdo, array $user): string
         . 'Kho được xem: ' . ($warehouses ? implode(', ', $warehouses) : 'chưa được giao kho nào') . '. Hôm nay: ' . date('d/m/Y') . '.';
 }
 
-/** Công cụ chỉ đọc mà bot được gọi */
 function chatTools(): array
 {
     $statuses = array_values(array_unique(array_merge(...array_values(VOUCHER_TYPE_STATUSES))));
@@ -167,11 +181,21 @@ function runChatTool(PDO $pdo, array $user, string $name, array $input): string
 
 /**
  * Hỏi trợ lý. $history = các lượt trước [['role' => user|assistant, 'content' => chuỗi]].
- * Vòng lặp: Claude gọi công cụ -> server chạy (chỉ đọc, theo quyền kho) -> gửi kết quả lại, tới khi có câu trả lời.
+ * Vòng lặp: AI gọi công cụ -> server chạy (chỉ đọc, theo quyền kho) -> gửi kết quả lại, tới khi có câu trả lời.
  */
 function askAssistant(PDO $pdo, array $user, array $history, string $question): string
 {
-    $config   = chatConfig();
+    $config = chatConfig();
+    return $config['provider'] === 'gemini'
+        ? askGemini($pdo, $user, $config, $history, $question)
+        : askClaude($pdo, $user, $config, $history, $question);
+}
+
+const CHAT_TOO_MANY_STEPS = 'Câu hỏi cần tra quá nhiều bước. Bạn thử hỏi cụ thể hơn (vd: một mặt hàng hoặc một kho).';
+const CHAT_NO_ANSWER      = 'Mình chưa tìm được câu trả lời. Bạn thử hỏi lại cụ thể hơn nhé.';
+
+function askClaude(PDO $pdo, array $user, array $config, array $history, string $question): string
+{
     $client   = new \Anthropic\Client(apiKey: $config['api_key']);
     $system   = chatSystemPrompt($pdo, $user);
     $tools    = chatTools();
@@ -213,9 +237,110 @@ function askAssistant(PDO $pdo, array $user, array $history, string $question): 
         }
     }
     if ($response->stopReason === 'tool_use') {
-        return 'Câu hỏi cần tra quá nhiều bước. Bạn thử hỏi cụ thể hơn (vd: một mặt hàng hoặc một kho).';
+        return CHAT_TOO_MANY_STEPS;
     }
-    return trim($text) !== '' ? trim($text) : 'Mình chưa tìm được câu trả lời. Bạn thử hỏi lại cụ thể hơn nhé.';
+    return trim($text) !== '' ? trim($text) : CHAT_NO_ANSWER;
+}
+
+/** Lỗi khi gọi Gemini; code = mã HTTP (429 = hết lượt miễn phí / gọi quá nhanh) */
+class ChatServiceException extends RuntimeException
+{
+}
+
+/** Công cụ theo định dạng Gemini: functionDeclarations (bỏ schema rỗng, bỏ giá trị enum rỗng) */
+function geminiTools(): array
+{
+    $declarations = [];
+    foreach (chatTools() as $tool) {
+        $declaration = ['name' => $tool['name'], 'description' => $tool['description']];
+        $schema      = $tool['inputSchema'];
+        if (is_array($schema['properties']) && $schema['properties']) {
+            foreach ($schema['properties'] as $key => $property) {
+                if (isset($property['enum'])) {
+                    $schema['properties'][$key]['enum'] = array_values(array_filter($property['enum'], fn ($v) => $v !== ''));
+                }
+            }
+            $declaration['parameters'] = $schema;
+        }
+        $declarations[] = $declaration;
+    }
+    return [['functionDeclarations' => $declarations]];
+}
+
+/** Gọi Gemini generateContent bằng cURL, trả về phản hồi đã giải mã JSON */
+function geminiRequest(array $config, array $body): array
+{
+    $curl = curl_init(sprintf(GEMINI_ENDPOINT, rawurlencode($config['model'])));
+    curl_setopt_array($curl, [
+        CURLOPT_POST           => true,
+        CURLOPT_RETURNTRANSFER => true,
+        CURLOPT_TIMEOUT        => 60,
+        CURLOPT_HTTPHEADER     => ['Content-Type: application/json', 'x-goog-api-key: ' . $config['api_key']],
+        CURLOPT_POSTFIELDS     => json_encode($body, JSON_UNESCAPED_UNICODE),
+    ]);
+    $raw    = curl_exec($curl);
+    $status = (int) curl_getinfo($curl, CURLINFO_HTTP_CODE);
+    $error  = curl_error($curl);
+    $errno  = curl_errno($curl);
+    curl_close($curl);
+    if ($raw === false) {
+        // mã 504 = model trả lời quá lâu (hết thời gian chờ), 0 = không kết nối được mạng
+        throw new ChatServiceException('Không kết nối được Gemini: ' . $error, $errno === CURLE_OPERATION_TIMEDOUT ? 504 : 0);
+    }
+    $json = json_decode($raw, true);
+    if ($status !== 200 || !is_array($json)) {
+        $message = $json['error']['message'] ?? substr((string) $raw, 0, 300);
+        // Gemini báo key sai bằng 400 "API key not valid": tách riêng (401) để không lẫn với lỗi dữ liệu gửi đi
+        $code = $status === 400 && stripos($message, 'API key') !== false ? 401 : $status;
+        throw new ChatServiceException('Gemini HTTP ' . $status . ': ' . $message, $code);
+    }
+    return $json;
+}
+
+function askGemini(PDO $pdo, array $user, array $config, array $history, string $question): string
+{
+    $contents = [];
+    foreach ($history as $turn) {
+        $contents[] = ['role' => $turn['role'] === 'assistant' ? 'model' : 'user', 'parts' => [['text' => $turn['content']]]];
+    }
+    $contents[] = ['role' => 'user', 'parts' => [['text' => $question]]];
+    $base = [
+        'systemInstruction' => ['parts' => [['text' => chatSystemPrompt($pdo, $user)]]],
+        'tools'             => geminiTools(),
+    ];
+
+    for ($round = 0; $round <= CHAT_MAX_TOOL_ROUNDS; $round++) {
+        $candidate = geminiRequest($config, $base + ['contents' => $contents])['candidates'][0] ?? null;
+        if ($candidate === null || !isset($candidate['content']['parts'])) {
+            return 'Xin lỗi, mình không trả lời được câu hỏi này. Bạn thử hỏi về tồn kho, lô hàng hoặc phiếu nhé.';
+        }
+        $parts = $candidate['content']['parts'];
+        $calls = array_values(array_filter($parts, fn ($part) => isset($part['functionCall'])));
+        if (!$calls) {
+            $text = implode('', array_map(fn ($part) => empty($part['thought']) ? ($part['text'] ?? '') : '', $parts));
+            return trim($text) !== '' ? trim($text) : CHAT_NO_ANSWER;
+        }
+        // Gửi lại nguyên phần trả lời của model (giữ thoughtSignature), kèm kết quả từng công cụ
+        // json_decode biến {} thành [] -> args rỗng phải gửi lại dạng object, nếu không Gemini báo 400
+        $content = $candidate['content'];
+        foreach ($content['parts'] as $i => $part) {
+            if (isset($part['functionCall'])) {
+                $content['parts'][$i]['functionCall']['args'] = (object) ($part['functionCall']['args'] ?? []);
+            }
+        }
+        $contents[] = $content;
+        $results    = [];
+        foreach ($calls as $part) {
+            $call   = $part['functionCall'];
+            $answer = ['name' => $call['name'], 'response' => ['result' => json_decode(runChatTool($pdo, $user, (string) $call['name'], (array) ($call['args'] ?? [])), true)]];
+            if (isset($call['id'])) {
+                $answer['id'] = $call['id'];
+            }
+            $results[] = ['functionResponse' => $answer];
+        }
+        $contents[] = ['role' => 'user', 'parts' => $results];
+    }
+    return CHAT_TOO_MANY_STEPS;
 }
 
 /** Chặn hỏi dồn dập: tối đa CHAT_RATE_LIMIT câu / 5 phút / phiên */

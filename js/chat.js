@@ -10,10 +10,17 @@
     const welcome = body.innerHTML;
     let busy = false;
 
-    function toggle(open) {
+    // Nhớ khung chat đang mở / đóng khi chuyển trang (trong tab trình duyệt này)
+    const OPEN_KEY = 'omnistock.chatOpen';
+
+    function toggle(open, focus = true) {
         panel.hidden = !open;
         fab.setAttribute('aria-expanded', String(open));
-        if (open) input.focus();
+        try { sessionStorage.setItem(OPEN_KEY, open ? '1' : '0'); } catch (e) {}
+        if (open) {
+            if (focus) input.focus();
+            body.scrollTop = body.scrollHeight;
+        }
     }
 
     function escapeHtml(text) {
@@ -121,4 +128,15 @@
         body.querySelectorAll('.js-chat-suggest button').forEach(button => button.addEventListener('click', () => ask(button.textContent)));
     }
     bindSuggestions();
+
+    // Vẽ lại các lượt hỏi - đáp đã lưu trong phiên đăng nhập (server giữ, xóa khi bấm "Cuộc trò chuyện mới")
+    let history = [];
+    try { history = JSON.parse(panel.dataset.history || '[]'); } catch (e) {}
+    if (history.length) {
+        body.querySelector('.js-chat-suggest')?.remove();
+        history.forEach(turn => addMessage(turn.role === 'assistant' ? 'bot' : 'user', turn.content));
+    }
+    let wasOpen = false;
+    try { wasOpen = sessionStorage.getItem(OPEN_KEY) === '1'; } catch (e) {}
+    if (wasOpen) toggle(true, false);   // mở lại nhưng không giành con trỏ khỏi ô nhập của trang
 })();

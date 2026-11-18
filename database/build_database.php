@@ -397,6 +397,7 @@ foreach ($snapshot as $b => $systemQty) {
 }
 $ledger->sql[] = "INSERT INTO stock_count_lines (count_id, item_id, batch_id, system_qty, counted_qty, reason, counted_by, counted_at) VALUES\n"
     . implode(",\n", $countRows) . ';';
+$ledger->sql[] = "INSERT INTO stock_count_members (count_id, user_id, added_by, added_at) VALUES (1, 4, 4, '2026-10-10 07:30:00');";
 $ledger->sql[] = '';
 
 $adjustLines = array_map(fn ($b) => [$b, $differences[$b][0]], array_keys($differences));

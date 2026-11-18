@@ -24,7 +24,8 @@
         <i class="fas fa-robot"></i><span class="chat-fab-label">Trợ lý AI</span><span class="chat-beta">BETA</span>
     </button>
     <section class="chat-panel" id="chatPanel" hidden aria-label="Trợ lý AI"
-             data-endpoint="<?= e($basePath . 'handle/chat_process.php') ?>" data-csrf="<?= e(csrfToken()) ?>">
+             data-endpoint="<?= e($basePath . 'handle/chat_process.php') ?>" data-csrf="<?= e(csrfToken()) ?>"
+             data-history="<?= e(json_encode($_SESSION['chat_history'] ?? [], JSON_UNESCAPED_UNICODE)) ?>">
         <header class="chat-head">
             <i class="fas fa-robot"></i>
             <div class="chat-title">Trợ lý OmniStock <small>Beta · chỉ tra cứu, theo kho bạn được xem</small></div>

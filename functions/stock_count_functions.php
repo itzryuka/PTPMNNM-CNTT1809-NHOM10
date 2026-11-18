@@ -127,7 +127,7 @@ function stockCountStatusBadge(string $status): string
  * Từ lúc này kho bị "đóng băng": phiếu nhập / xuất / điều chuyển của kho không duyệt được
  * cho tới khi đợt kiểm kê được duyệt hoặc hủy -> số tồn chụp lại luôn đúng tới lúc chốt.
  */
-function createStockCount(PDO $pdo, array $user, int $warehouseId, string $note): int
+function createStockCount(PDO $pdo, array $user, int $warehouseId, string $note, array $memberIds): int
 {
     if (!isManager($user)) {
         throw new VoucherException('Chỉ quản lý kho mới được mở đợt kiểm kê (việc này tạm khóa mọi giao dịch của kho).');
@@ -162,6 +162,7 @@ function createStockCount(PDO $pdo, array $user, int $warehouseId, string $note)
         $stmt = $pdo->prepare('INSERT INTO stock_counts (code, warehouse_id, status, note, created_by, created_at) VALUES (?, ?, \'COUNTING\', ?, ?, NOW())');
         $stmt->execute([$code, $warehouseId, $note === '' ? null : $note, $user['id']]);
         $countId = (int) $pdo->lastInsertId();
+        insertStockCountMembers($pdo, $user, $countId, normalizeStockCountMembers($pdo, $warehouseId, $memberIds));
 
         // Khóa các dòng tồn của kho rồi mới chụp số
         $stmt = $pdo->prepare('SELECT id FROM stocks WHERE warehouse_id = ? FOR UPDATE');
@@ -186,27 +187,42 @@ function createStockCount(PDO $pdo, array $user, int $warehouseId, string $note)
 }
 
 /**
- * Lưu số đếm thực tế (lưu nhiều lần được, khi còn COUNTING).
- * $entries = [line_id => ['counted_qty' => '12' | '', 'reason' => '...'], ...]; để trống = chưa đếm.
+ * Lưu số đếm thực tế. Nhiều nhân viên cùng đếm 1 đợt: dòng nào đã có người lưu số đếm thì KHÓA,
+ * không ai ghi đè được nữa (kể cả người đã đếm) - muốn đếm lại thì quản lý kho mở khóa dòng đó.
+ * $entries = [line_id => ['counted_qty' => '12' | '', 'reason' => '...'], ...]; để trống = chưa đếm (bỏ qua).
+ * Dòng lệch phải có lý do ngay khi lưu (vì lưu xong là khóa, không bổ sung sau được).
+ * Trả về ['saved' => số dòng đã ghi, 'conflicts' => [thông báo dòng đã bị người khác nhập trước]].
  */
-function saveStockCountEntries(PDO $pdo, array $user, int $countId, array $entries): int
+function saveStockCountEntries(PDO $pdo, array $user, int $countId, array $entries): array
 {
     $pdo->beginTransaction();
     try {
+        // FOR UPDATE trên đợt: 2 nhân viên bấm lưu cùng lúc -> người sau chờ, rồi thấy dòng người trước đã khóa
         $count = lockOpenStockCount($pdo, $countId);
         if (!canAccessWarehouse($user, (int) $count['warehouse_id'])) {
             throw new VoucherException('Lỗi bảo mật: bạn không có quyền trên kho này.');
         }
+        if (!canEnterStockCount($user, getStockCountMemberIds($pdo, $countId))) {
+            throw new VoucherException("Bạn không có trong danh sách nhân viên kiểm kê đợt {$count['code']}. Nhờ quản lý kho thêm bạn vào đợt.");
+        }
 
-        $stmt = $pdo->prepare('SELECT id, counted_qty, reason FROM stock_count_lines WHERE count_id = ?');
+        $stmt = $pdo->prepare('
+            SELECT l.id, l.system_qty, l.counted_qty, i.sku, b.batch_no, u.full_name AS counted_by_name
+            FROM stock_count_lines l
+            JOIN items i   ON i.id = l.item_id
+            JOIN batches b ON b.id = l.batch_id
+            LEFT JOIN users u ON u.id = l.counted_by
+            WHERE l.count_id = ?
+        ');
         $stmt->execute([$countId]);
         $lines = [];
         foreach ($stmt->fetchAll() as $row) {
             $lines[(int) $row['id']] = $row;
         }
 
-        $update = $pdo->prepare('UPDATE stock_count_lines SET counted_qty = ?, reason = ?, counted_by = ?, counted_at = NOW() WHERE id = ?');
-        $changed = 0;
+        $update    = $pdo->prepare('UPDATE stock_count_lines SET counted_qty = ?, reason = ?, counted_by = ?, counted_at = NOW() WHERE id = ? AND counted_qty IS NULL');
+        $toSave    = [];
+        $conflicts = [];
         foreach ($entries as $lineId => $entry) {
             $lineId = (int) $lineId;
             if (!isset($lines[$lineId]) || !is_array($entry)) {
@@ -214,30 +230,183 @@ function saveStockCountEntries(PDO $pdo, array $user, int $countId, array $entri
             }
             $qty    = trim((string) ($entry['counted_qty'] ?? ''));
             $reason = trim((string) ($entry['reason'] ?? ''));
-            if ($qty !== '' && !preg_match('/^\d{1,12}(\.\d{1,3})?$/', $qty)) {
-                throw new VoucherException("Số đếm \"$qty\" không hợp lệ (số không âm, tối đa 3 chữ số thập phân).");
+            if ($qty === '') {
+                continue;                                    // chưa đếm dòng này
+            }
+            $line = $lines[$lineId];
+            $name = "{$line['sku']} - lô {$line['batch_no']}";
+            if (!preg_match('/^\d{1,12}(\.\d{1,3})?$/', $qty)) {
+                throw new VoucherException("Số đếm \"$qty\" của $name không hợp lệ (số không âm, tối đa 3 chữ số thập phân).");
             }
             if (mb_strlen($reason) > 255) {
                 throw new VoucherException('Lý do chênh lệch tối đa 255 ký tự.');
             }
-            $qty    = $qty === '' ? null : $qty;
-            $reason = $reason === '' ? null : $reason;
-
-            $old = $lines[$lineId];
-            $sameQty = $old['counted_qty'] === null ? $qty === null : ($qty !== null && toMilli($old['counted_qty']) === toMilli($qty));
-            if ($sameQty && $old['reason'] === $reason) {
-                continue;                                    // không đổi -> giữ nguyên người đếm / thời điểm đếm
+            if ($line['counted_qty'] !== null) {
+                // Đã khóa: gửi lại đúng số cũ (trang chưa tải lại) thì bỏ qua, khác thì báo không ghi đè
+                if (toMilli($line['counted_qty']) !== toMilli($qty)) {
+                    $conflicts[] = "$name đã được {$line['counted_by_name']} nhập " . formatQty($line['counted_qty'])
+                                 . ', số bạn nhập (' . formatQty($qty) . ') không được ghi.';
+                }
+                continue;
             }
-            $update->execute([$qty, $reason, $user['id'], $lineId]);
-            $changed++;
+            if (toMilli($qty) !== toMilli($line['system_qty']) && $reason === '') {
+                throw new VoucherException("$name lệch so với tồn hệ thống: phải nhập lý do chênh lệch trước khi lưu (lưu xong dòng sẽ bị khóa).");
+            }
+            $toSave[] = [$qty, $reason === '' ? null : $reason, $user['id'], $lineId];
+        }
+
+        foreach ($toSave as $params) {
+            $update->execute($params);
         }
 
         $pdo->commit();
-        return $changed;
+        return ['saved' => count($toSave), 'conflicts' => $conflicts];
     } catch (Throwable $e) {
         $pdo->rollBack();
         throw $e;
     }
+}
+
+// ---------------------------------------------------------------------
+// NHÂN VIÊN KIỂM KÊ: quản lý chọn khi mở đợt, đổi được khi đợt còn mở
+// ---------------------------------------------------------------------
+
+/** Người chọn được đi kiểm kê kho: tài khoản đang hoạt động (nhân viên / quản lý) được phân quyền kho đó */
+function getStockCountCandidates(PDO $pdo, array $warehouseIds): array
+{
+    if (!$warehouseIds) {
+        return [];
+    }
+    $placeholders = implode(',', array_fill(0, count($warehouseIds), '?'));
+    $stmt = $pdo->prepare("
+        SELECT uw.warehouse_id, u.id, u.full_name, u.role
+        FROM user_warehouses uw JOIN users u ON u.id = uw.user_id
+        WHERE uw.warehouse_id IN ($placeholders) AND u.is_active = 1 AND u.role IN ('STAFF', 'MANAGER')
+        ORDER BY u.role DESC, u.full_name
+    ");
+    $stmt->execute(array_map('intval', $warehouseIds));
+    return $stmt->fetchAll();
+}
+
+/** Lọc danh sách id gửi lên: phải là người chọn được của kho, ít nhất 1 người */
+function normalizeStockCountMembers(PDO $pdo, int $warehouseId, array $memberIds): array
+{
+    $allowed = array_map('intval', array_column(getStockCountCandidates($pdo, [$warehouseId]), 'id'));
+    $ids     = array_values(array_unique(array_map('intval', $memberIds)));
+    foreach ($ids as $id) {
+        if (!in_array($id, $allowed, true)) {
+            throw new VoucherException('Có người được chọn không thuộc kho này hoặc tài khoản đã bị khóa.');
+        }
+    }
+    if (!$ids) {
+        throw new VoucherException('Phải chọn ít nhất 1 nhân viên đi kiểm kê.');
+    }
+    return $ids;
+}
+
+function insertStockCountMembers(PDO $pdo, array $user, int $countId, array $memberIds): void
+{
+    $stmt = $pdo->prepare('INSERT IGNORE INTO stock_count_members (count_id, user_id, added_by) VALUES (?, ?, ?)');
+    foreach ($memberIds as $memberId) {
+        $stmt->execute([$countId, $memberId, $user['id']]);
+    }
+}
+
+function getStockCountMemberIds(PDO $pdo, int $countId): array
+{
+    $stmt = $pdo->prepare('SELECT user_id FROM stock_count_members WHERE count_id = ?');
+    $stmt->execute([$countId]);
+    return array_map('intval', $stmt->fetchAll(PDO::FETCH_COLUMN));
+}
+
+/** Danh sách nhân viên của đợt kèm số dòng mỗi người đã đếm */
+function getStockCountMembers(PDO $pdo, int $countId): array
+{
+    $stmt = $pdo->prepare('
+        SELECT u.id, u.full_name, u.role, u.is_active,
+               (SELECT COUNT(*) FROM stock_count_lines l WHERE l.count_id = m.count_id AND l.counted_by = u.id) AS counted_lines
+        FROM stock_count_members m JOIN users u ON u.id = m.user_id
+        WHERE m.count_id = ?
+        ORDER BY u.full_name
+    ');
+    $stmt->execute([$countId]);
+    return $stmt->fetchAll();
+}
+
+/** Nhập số đếm được: người có tên trong đợt, hoặc quản lý (kho đã được canAccessWarehouse kiểm tra riêng) */
+function canEnterStockCount(array $user, array $memberIds): bool
+{
+    return isManager($user) || in_array((int) $user['id'], $memberIds, true);
+}
+
+/** Quản lý đổi danh sách nhân viên khi đợt còn mở; người bị bỏ ra vẫn giữ các dòng đã đếm */
+function updateStockCountMembers(PDO $pdo, array $user, int $countId, array $memberIds): void
+{
+    $pdo->beginTransaction();
+    try {
+        $count = lockOpenStockCount($pdo, $countId);
+        assertCanDecide($user, [(int) $count['warehouse_id']]);
+        $ids = normalizeStockCountMembers($pdo, (int) $count['warehouse_id'], $memberIds);
+        $placeholders = implode(',', array_fill(0, count($ids), '?'));
+        $stmt = $pdo->prepare("DELETE FROM stock_count_members WHERE count_id = ? AND user_id NOT IN ($placeholders)");
+        $stmt->execute(array_merge([$countId], $ids));
+        insertStockCountMembers($pdo, $user, $countId, $ids);
+        $pdo->commit();
+    } catch (Throwable $e) {
+        $pdo->rollBack();
+        throw $e;
+    }
+}
+
+/** Quản lý kho mở khóa 1 dòng đã đếm (nhập nhầm) -> dòng về "chưa đếm", nhân viên đếm lại */
+function unlockStockCountLine(PDO $pdo, array $user, int $countId, int $lineId): string
+{
+    $pdo->beginTransaction();
+    try {
+        $count = lockOpenStockCount($pdo, $countId);
+        assertCanDecide($user, [(int) $count['warehouse_id']]);
+        $stmt = $pdo->prepare('
+            SELECT i.sku, b.batch_no FROM stock_count_lines l
+            JOIN items i ON i.id = l.item_id JOIN batches b ON b.id = l.batch_id
+            WHERE l.id = ? AND l.count_id = ? AND l.counted_qty IS NOT NULL
+        ');
+        $stmt->execute([$lineId, $countId]);
+        $line = $stmt->fetch();
+        if (!$line) {
+            throw new VoucherException('Dòng kiểm kê không tồn tại hoặc chưa được đếm.');
+        }
+        $stmt = $pdo->prepare('UPDATE stock_count_lines SET counted_qty = NULL, reason = NULL, counted_by = NULL, counted_at = NULL WHERE id = ?');
+        $stmt->execute([$lineId]);
+        $pdo->commit();
+        return "{$line['sku']} - lô {$line['batch_no']}";
+    } catch (Throwable $e) {
+        $pdo->rollBack();
+        throw $e;
+    }
+}
+
+/** Trạng thái các dòng (cho trang chi tiết tự cập nhật dòng người khác vừa khóa): [line_id => {...}] */
+function getStockCountLineStates(PDO $pdo, int $countId): array
+{
+    $stmt = $pdo->prepare('
+        SELECT l.id, l.counted_qty, l.difference, l.reason, l.counted_at, u.full_name AS counted_by_name
+        FROM stock_count_lines l LEFT JOIN users u ON u.id = l.counted_by
+        WHERE l.count_id = ?
+    ');
+    $stmt->execute([$countId]);
+    $states = [];
+    foreach ($stmt->fetchAll() as $row) {
+        $states[(int) $row['id']] = [
+            'counted'  => $row['counted_qty'] !== null,
+            'qty'      => $row['counted_qty'] !== null ? formatQty($row['counted_qty']) : null,
+            'diff'     => $row['counted_qty'] !== null ? diffLabel($row['difference']) : null,
+            'mismatch' => $row['counted_qty'] !== null && toMilli($row['difference']) !== 0,
+            'reason'   => $row['reason'],
+            'by'       => $row['counted_by_name'],
+            'at'       => $row['counted_at'] !== null ? date('H:i d/m', strtotime($row['counted_at'])) : null,
+        ];
+    }
+    return $states;
 }
 
 /**

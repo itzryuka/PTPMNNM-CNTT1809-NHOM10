@@ -7,6 +7,19 @@ require_once __DIR__ . '/../functions/voucher_functions.php';
 require_once __DIR__ . '/../functions/stock_count_functions.php';
 
 $user = requireLogin('../');
+
+// GET ?action=lines&id=...: trạng thái các dòng (JSON) để trang chi tiết thấy ngay dòng người khác vừa đếm và khóa
+if ($_SERVER['REQUEST_METHOD'] === 'GET' && ($_GET['action'] ?? '') === 'lines') {
+    header('Content-Type: application/json; charset=utf-8');
+    $pdo   = getDbConnection();
+    $count = getStockCount($pdo, (int) ($_GET['id'] ?? 0));
+    if ($count === null || !canAccessWarehouse($user, (int) $count['warehouse_id'])) {
+        http_response_code(404);
+        exit(json_encode(['error' => 'Không tìm thấy đợt kiểm kê.'], JSON_UNESCAPED_UNICODE));
+    }
+    exit(json_encode(['status' => $count['status'], 'lines' => getStockCountLineStates($pdo, (int) $count['id'])], JSON_UNESCAPED_UNICODE));
+}
+
 if ($_SERVER['REQUEST_METHOD'] !== 'POST') {
     http_response_code(405);
     exit('Chỉ chấp nhận POST.');
@@ -16,18 +29,65 @@ verifyCsrf();
 $action  = (string) ($_POST['action'] ?? '');
 $countId = (int) ($_POST['id'] ?? 0);
 
+// Lưu 1 dòng (fetch từ trang chi tiết): lưu xong dòng khóa ngay. Trả JSON kèm trạng thái mọi dòng để trang cập nhật luôn.
+if ($action === 'save_line') {
+    header('Content-Type: application/json; charset=utf-8');
+    $lineId = (int) ($_POST['line_id'] ?? 0);
+    $entry  = ['counted_qty' => (string) ($_POST['counted_qty'] ?? ''), 'reason' => (string) ($_POST['reason'] ?? '')];
+    try {
+        $pdo = getDbConnection();
+        if (trim($entry['counted_qty']) === '') {
+            throw new VoucherException('Nhập số đếm thực tế trước khi lưu.');
+        }
+        $result = saveStockCountEntries($pdo, $user, $countId, [$lineId => $entry]);
+        // Có người lưu dòng này trước (2 người bấm gần như cùng lúc): 409 + báo ai đã nhập
+        http_response_code($result['conflicts'] ? 409 : 200);
+        echo json_encode([
+            'ok'      => !$result['conflicts'],
+            'message' => $result['conflicts'][0] ?? 'Đã lưu và khóa dòng.',
+            'lines'   => getStockCountLineStates($pdo, $countId),
+        ], JSON_UNESCAPED_UNICODE);
+    } catch (VoucherException $e) {
+        http_response_code(422);
+        echo json_encode(['ok' => false, 'message' => $e->getMessage()], JSON_UNESCAPED_UNICODE);
+    } catch (PDOException $e) {
+        error_log('[stock_count_process] ' . $e->getMessage());
+        http_response_code(500);
+        echo json_encode(['ok' => false, 'message' => 'Lỗi CSDL, dòng chưa được lưu. Bạn thử lại.'], JSON_UNESCAPED_UNICODE);
+    }
+    exit;
+}
+
 try {
     $pdo = getDbConnection();
     switch ($action) {
         case 'create':
-            $countId = createStockCount($pdo, $user, (int) ($_POST['warehouse_id'] ?? 0), (string) ($_POST['note'] ?? ''));
-            setFlash('success', 'Đã mở đợt kiểm kê và chụp số tồn. Kho tạm khóa giao dịch cho tới khi chốt đợt.');
+            $members = is_array($_POST['members'] ?? null) ? $_POST['members'] : [];
+            $countId = createStockCount($pdo, $user, (int) ($_POST['warehouse_id'] ?? 0), (string) ($_POST['note'] ?? ''), $members);
+            setFlash('success', 'Đã mở đợt kiểm kê, chụp số tồn và giao cho ' . count(array_unique($members)) . ' nhân viên đi đếm. Kho tạm khóa giao dịch cho tới khi chốt đợt.');
             redirect('../views/stock_count_detail.php?id=' . $countId);
 
         case 'save':
             $entries = is_array($_POST['lines'] ?? null) ? $_POST['lines'] : [];
-            $changed = saveStockCountEntries($pdo, $user, $countId, $entries);
-            setFlash('success', "Đã lưu số đếm ($changed dòng thay đổi).");
+            $result = saveStockCountEntries($pdo, $user, $countId, $entries);
+            if ($result['conflicts']) {
+                // Người khác đã lưu trước những dòng này: không ghi đè, báo lại để người dùng đối chiếu
+                setFlash('error', "Đã lưu {$result['saved']} dòng. Không ghi đè " . count($result['conflicts']) . ' dòng đã bị khóa: ' . implode(' ', $result['conflicts']));
+            } else {
+                setFlash('success', $result['saved'] > 0
+                    ? "Đã lưu {$result['saved']} dòng. Các dòng này đã được khóa, người khác không sửa được."
+                    : 'Chưa có dòng mới nào được nhập số đếm.');
+            }
+            redirect('../views/stock_count_detail.php?id=' . $countId);
+
+        case 'members':
+            updateStockCountMembers($pdo, $user, $countId, is_array($_POST['members'] ?? null) ? $_POST['members'] : []);
+            setFlash('success', 'Đã cập nhật danh sách nhân viên kiểm kê.');
+            redirect('../views/stock_count_detail.php?id=' . $countId);
+
+        case 'unlock_line':
+            $lineName = unlockStockCountLine($pdo, $user, $countId, (int) ($_POST['line_id'] ?? 0));
+            setFlash('success', "Đã mở khóa dòng $lineName: nhân viên có thể đếm lại.");
             redirect('../views/stock_count_detail.php?id=' . $countId);
 
         case 'approve':

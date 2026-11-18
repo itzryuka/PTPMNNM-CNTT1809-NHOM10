@@ -1,0 +1,14 @@
+# Render Blueprint: New > Blueprint > chọn repo này -> Render tự tạo web service theo file này.
+# Chi tiết từng bước: docs/deploy-render.md
+services:
+  - type: web
+    name: omnistock
+    runtime: docker
+    plan: free
+    region: singapore
+    healthCheckPath: /views/login.php
+    envVars:
+      - key: AI_PROVIDER
+        value: gemini
+      - key: GEMINI_API_KEY
+        sync: false          # Render hỏi giá trị khi tạo; không ghi key vào git

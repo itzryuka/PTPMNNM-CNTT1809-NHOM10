@@ -1,0 +1,4 @@
+# Script chạy trong container Linux: luôn xuống dòng kiểu LF (CRLF làm /bin/sh báo lỗi)
+*.sh text eol=lf
+Dockerfile text eol=lf
+docker/* text eol=lf

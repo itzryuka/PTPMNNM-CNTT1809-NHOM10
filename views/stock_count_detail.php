@@ -14,8 +14,10 @@ $old = $_SESSION['stock_count_old'] ?? null;
 unset($_SESSION['stock_count_old']);
 $oldLines = (is_array($old) && (int) $old['id'] === $countId && is_array($old['lines'])) ? $old['lines'] : [];
 
-$count   = null;
-$lines   = [];
+$count      = null;
+$lines      = [];
+$members    = [];
+$candidates = [];
 $dbError = '';
 try {
     $pdo   = getDbConnection();
@@ -28,7 +30,9 @@ try {
         $dbError = 'Bạn không có quyền xem đợt kiểm kê của kho này.';
         $count   = null;
     } else {
-        $lines = getStockCountLines($pdo, $countId);
+        $lines      = getStockCountLines($pdo, $countId);
+        $members    = getStockCountMembers($pdo, $countId);
+        $candidates = getStockCountCandidates($pdo, [(int) $count['warehouse_id']]);
     }
 } catch (PDOException $e) {
     $dbError = 'Không thể tải dữ liệu: ' . $e->getMessage();
@@ -36,6 +40,8 @@ try {
 
 $isOpen      = ($count['status'] ?? '') === 'COUNTING';
 $canDecide   = $count !== null && $isOpen && isManager($user) && canAccessWarehouse($user, (int) $count['warehouse_id']);   // chỉ quản lý của kho này
+// Nhập số đếm: chỉ nhân viên có tên trong đợt và quản lý kho; người khác chỉ xem
+$canEnter    = $isOpen && canEnterStockCount($user, array_map('intval', array_column($members, 'id')));
 $countedRows = count(array_filter($lines, fn ($l) => $l['counted_qty'] !== null));
 $diffRows    = count(array_filter($lines, fn ($l) => $l['counted_qty'] !== null && toMilli($l['difference']) !== 0));
 
@@ -52,6 +58,12 @@ require __DIR__ . '/layout/header.php';
                         <i class="fas fa-snowflake"></i>
                         <?= e($count['warehouse_name']) ?> đang kiểm kê: tạm thời không nhận / xuất / gửi / giữ hàng của kho được cho tới khi chốt đợt này.
                     </div>
+                    <?php if (!$canEnter): ?>
+                        <div class="alert-error"><i class="fas fa-user-lock"></i> Bạn không có trong danh sách nhân viên kiểm kê đợt này nên chỉ xem được. Cần đếm thì nhờ quản lý kho thêm bạn vào đợt.</div>
+                    <?php endif; ?>
+                    <p class="form-hint"><i class="fas fa-users"></i> Nhiều nhân viên cùng đếm được: đếm xong dòng nào thì nhập số rồi bấm <strong>Lưu &amp; khóa</strong> (hoặc Enter).
+                        Dòng đó <strong>khóa <i class="fas fa-lock"></i> ngay</strong> kèm tên người nhập, không ai ghi đè được; nhập nhầm thì nhờ quản lý kho mở khóa để đếm lại.
+                        Trang tự cập nhật dòng người khác vừa nhập.</p>
                 <?php endif; ?>
 
                 <!-- THÔNG TIN ĐỢT -->
@@ -64,7 +76,18 @@ require __DIR__ . '/layout/header.php';
                         <div><dt>Kho</dt><dd><?= e($count['warehouse_name']) ?></dd></div>
                         <div><dt>Chụp số tồn lúc</dt><dd><?= e(date('d/m/Y H:i', strtotime($count['created_at']))) ?></dd></div>
                         <div><dt>Người mở đợt</dt><dd><?= e($count['creator_name']) ?></dd></div>
-                        <div><dt>Tiến độ</dt><dd>Đã đếm <?= $countedRows ?> / <?= count($lines) ?> dòng · <?= $diffRows ?> dòng lệch</dd></div>
+                        <div><dt>Tiến độ</dt><dd id="countProgress">Đã đếm <?= $countedRows ?> / <?= count($lines) ?> dòng · <?= $diffRows ?> dòng lệch</dd></div>
+                        <div class="span-2">
+                            <dt>Nhân viên kiểm kê</dt>
+                            <dd>
+                                <?php foreach ($members as $member): ?>
+                                    <span class="badge <?= (int) $member['counted_lines'] > 0 ? 'badge-active' : 'badge-inactive' ?>" title="Đã đếm <?= (int) $member['counted_lines'] ?> dòng">
+                                        <?= e($member['full_name']) ?> · <?= (int) $member['counted_lines'] ?> dòng
+                                    </span>
+                                <?php endforeach; ?>
+                                <?= $members ? '' : '<span class="muted">—</span>' ?>
+                            </dd>
+                        </div>
                         <div class="span-2"><dt>Ghi chú</dt><dd><?= $count['note'] !== null ? e($count['note']) : '—' ?></dd></div>
                         <?php if (!$isOpen): ?>
                             <div>
@@ -84,7 +107,10 @@ require __DIR__ . '/layout/header.php';
                 </div>
 
                 <!-- DÒNG KIỂM KÊ -->
-                <form method="post" action="../handle/stock_count_process.php" id="countForm">
+                <!-- Mỗi dòng lưu riêng bằng fetch (action=save_line, js/stock_count.js): lưu xong là khóa ngay -->
+                <form method="post" action="../handle/stock_count_process.php" id="countForm"
+                      data-poll="<?= $isOpen ? e('../handle/stock_count_process.php?action=lines&id=' . (int) $count['id']) : '' ?>"
+                      data-can-unlock="<?= $canDecide ? '1' : '' ?>">
                     <input type="hidden" name="csrf_token" value="<?= e(csrfToken()) ?>">
                     <input type="hidden" name="action" value="save">
                     <input type="hidden" name="id" value="<?= (int) $count['id'] ?>">
@@ -107,39 +133,54 @@ require __DIR__ . '/layout/header.php';
                                         <th style="width: 140px;">Đếm thực tế</th>
                                         <th class="text-right">Chênh lệch</th>
                                         <th style="min-width: 220px;">Lý do chênh lệch</th>
-                                        <th>Người đếm</th>
+                                        <th style="min-width: 170px;">Người nhập</th>
                                     </tr>
                                 </thead>
                                 <tbody>
                                     <?php foreach ($lines as $n => $line): ?>
                                         <?php
                                         $lineId  = (int) $line['id'];
-                                        $counted = $oldLines[$lineId]['counted_qty'] ?? ($line['counted_qty'] !== null ? rtrim(rtrim($line['counted_qty'], '0'), '.') : '');
-                                        $reason  = $oldLines[$lineId]['reason'] ?? ($line['reason'] ?? '');
+                                        $locked  = $line['counted_qty'] !== null;      // đã có người lưu số đếm -> khóa
+                                        $counted = $oldLines[$lineId]['counted_qty'] ?? '';
+                                        $reason  = $oldLines[$lineId]['reason'] ?? '';
                                         ?>
-                                        <tr class="js-count-row" data-system="<?= e($line['system_qty']) ?>">
+                                        <tr class="js-count-row<?= $isOpen && $locked ? ' row-locked' : '' ?>" data-line="<?= $lineId ?>" data-system="<?= e($line['system_qty']) ?>">
                                             <td><?= $n + 1 ?></td>
                                             <td><?= e($line['sku'] . ' - ' . $line['item_name']) ?></td>
                                             <td><?= e($line['batch_no']) ?><br><span class="muted"><?= $line['expiry_date'] ? formatDate($line['expiry_date']) : '—' ?></span></td>
                                             <td class="text-right"><?= formatQty($line['system_qty']) ?> <span class="muted"><?= e($line['unit']) ?></span></td>
                                             <td>
-                                                <?php if ($isOpen): ?>
+                                                <?php if ($canEnter && !$locked): ?>
                                                     <input class="form-control js-counted" type="number" min="0" step="0.001"
                                                            name="lines[<?= $lineId ?>][counted_qty]" value="<?= e($counted) ?>" placeholder="Chưa đếm">
                                                 <?php else: ?>
-                                                    <?= $line['counted_qty'] !== null ? formatQty($line['counted_qty']) : '—' ?>
+                                                    <?= $isOpen && $locked ? '<i class="fas fa-lock muted" title="Đã khóa"></i> ' : '' ?><?= $locked ? formatQty($line['counted_qty']) : '—' ?>
                                                 <?php endif; ?>
                                             </td>
                                             <td class="text-right js-diff"><?= $line['counted_qty'] !== null ? diffLabel($line['difference']) : '<span class="muted">—</span>' ?></td>
                                             <td>
-                                                <?php if ($isOpen): ?>
+                                                <?php if ($canEnter && !$locked): ?>
                                                     <input class="form-control js-reason" name="lines[<?= $lineId ?>][reason]" maxlength="255"
                                                            value="<?= e($reason) ?>" placeholder="Bắt buộc khi có chênh lệch">
                                                 <?php else: ?>
                                                     <?= $line['reason'] !== null ? e($line['reason']) : '<span class="muted">—</span>' ?>
                                                 <?php endif; ?>
                                             </td>
-                                            <td><?= $line['counted_by_name'] ? e($line['counted_by_name']) : '<span class="muted">—</span>' ?></td>
+                                            <td class="js-counter">
+                                                <?php if ($canEnter && !$locked): ?>
+                                                    <button class="btn btn-primary btn-sm js-save-line" type="button" title="Lưu số đếm dòng này và khóa lại"><i class="fas fa-lock"></i> Lưu &amp; khóa</button>
+                                                <?php elseif ($line['counted_by_name']): ?>
+                                                    <span class="count-by"><?= $isOpen ? '<i class="fas fa-lock"></i> ' : '' ?><strong><?= e($line['counted_by_name']) ?></strong></span>
+                                                    <span class="muted"><?= e(date('H:i d/m', strtotime($line['counted_at']))) ?></span>
+                                                    <?php if ($canDecide && $locked): ?>
+                                                        <button class="icon-btn" type="submit" form="unlockForm" name="line_id" value="<?= $lineId ?>" title="Mở khóa để đếm lại"
+                                                                data-confirm-title="Mở khóa dòng" data-confirm-ok="Mở khóa"
+                                                                data-confirm="Mở khóa dòng <?= e($line['sku'] . ' - lô ' . $line['batch_no']) ?>? Số đếm của <?= e($line['counted_by_name']) ?> bị xóa để đếm lại."><i class="fas fa-lock-open icon-edit"></i></button>
+                                                    <?php endif; ?>
+                                                <?php else: ?>
+                                                    <span class="muted">—</span>
+                                                <?php endif; ?>
+                                            </td>
                                         </tr>
                                     <?php endforeach; ?>
                                 </tbody>
@@ -150,12 +191,39 @@ require __DIR__ . '/layout/header.php';
                     <?php if ($isOpen): ?>
                         <div class="form-actions">
                             <span class="muted" id="dirtyHint"></span>
-                            <button class="btn btn-primary" type="submit"><i class="fas fa-save"></i> Lưu số đếm</button>
                         </div>
                     <?php endif; ?>
                 </form>
 
                 <?php if ($canDecide): ?>
+                    <!-- Mở khóa 1 dòng đã đếm (nút trong bảng gắn vào bằng form="unlockForm") -->
+                    <form id="unlockForm" method="post" action="../handle/stock_count_process.php">
+                        <input type="hidden" name="csrf_token" value="<?= e(csrfToken()) ?>">
+                        <input type="hidden" name="action" value="unlock_line">
+                        <input type="hidden" name="id" value="<?= (int) $count['id'] ?>">
+                    </form>
+
+                    <!-- ĐỔI NHÂN VIÊN KIỂM KÊ (quản lý): thêm người đếm giúp / bỏ người vắng; dòng đã đếm giữ nguyên -->
+                    <form class="form-card" method="post" action="../handle/stock_count_process.php" style="margin-top: 20px;">
+                        <h3><i class="fas fa-user-check"></i> Nhân viên kiểm kê</h3>
+                        <input type="hidden" name="csrf_token" value="<?= e(csrfToken()) ?>">
+                        <input type="hidden" name="action" value="members">
+                        <input type="hidden" name="id" value="<?= (int) $count['id'] ?>">
+                        <?php $memberIds = array_map('intval', array_column($members, 'id')); ?>
+                        <div class="check-grid js-member-grid">
+                            <?php foreach ($candidates as $candidate): ?>
+                                <label class="check-chip">
+                                    <input type="checkbox" name="members[]" value="<?= (int) $candidate['id'] ?>" <?= in_array((int) $candidate['id'], $memberIds, true) ? 'checked' : '' ?>>
+                                    <span><?= e($candidate['full_name']) ?> <span class="muted">· <?= e(roleLabel($candidate['role'])) ?></span></span>
+                                </label>
+                            <?php endforeach; ?>
+                        </div>
+                        <div class="form-actions" style="margin-top: 12px;">
+                            <span class="muted">Bỏ ai ra thì các dòng người đó đã đếm vẫn giữ nguyên.</span>
+                            <button class="btn btn-primary" type="submit"><i class="fas fa-save"></i> Cập nhật danh sách</button>
+                        </div>
+                    </form>
+
                     <!-- DUYỆT / HỦY (quản lý) -->
                     <div class="form-card" style="margin-top: 20px;">
                         <h3><i class="fas fa-gavel"></i> Chốt đợt kiểm kê</h3>

@@ -1,11 +1,10 @@
 <?php
 // ===== (1) NẠP KẾT NỐI + HÀM TRUY VẤN =====
-// File nằm trong views/ nên lùi 1 cấp: __DIR__ . '/../functions/...'
 require_once __DIR__ . '/../functions/db_connection.php';
 require_once __DIR__ . '/../functions/helpers.php';
 require_once __DIR__ . '/../functions/auth.php';
 require_once __DIR__ . '/../functions/item_functions.php';
-require_once __DIR__ . '/../functions/voucher_functions.php';   // getWarehouseOptions()
+require_once __DIR__ . '/../functions/voucher_functions.php';   
 
 $user = requireLogin('../');
 
@@ -15,11 +14,8 @@ $status      = array_key_exists($_GET['status'] ?? '', ITEM_STATUS_FILTERS) ? $_
 $warehouseId = (int) ($_GET['warehouse'] ?? 0);
 $sort        = readSort(ITEM_SORT_COLUMNS, 'sku');
 
-// Kho user được phân quyền (requireLogin đọc lại từ CSDL ở mỗi request)
 $allowedWarehouses = $user['warehouses'];
-// Thêm / sửa / xóa / nhập file: chỉ quản lý (server cũng kiểm tra lại trong handle/item_process.php)
 $canManage = isManager($user);
-// Lần lưu trước trong popup bị lỗi -> mở lại popup kèm dữ liệu đã nhập và lỗi
 $modalState = takeModalState('item_modal');
 
 // ===== (3) TRUY VẤN CSDL =====

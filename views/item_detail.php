@@ -11,7 +11,7 @@ $itemId = (int) ($_GET['id'] ?? 0);
 $item       = null;
 $stock      = [];
 $units      = [];
-$modalState = takeModalState('item_modal');   // lần sửa trước bị lỗi -> mở lại popup kèm lỗi
+$modalState = takeModalState('item_modal');
 $dbError    = '';
 try {
     $pdo   = getDbConnection();

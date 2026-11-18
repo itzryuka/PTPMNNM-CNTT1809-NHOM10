@@ -62,7 +62,7 @@ require __DIR__ . '/layout/header.php';
                     <span class="muted toolbar-note"><i class="fas fa-info-circle"></i>
                         <?= $view === 'summary'
                             ? 'Tính thẳng từ sổ phát sinh: tồn cuối = tồn đầu + nhập − xuất. Điều chuyển là xuất ở kho đi và nhập ở kho đến.'
-                            : 'Mỗi dòng là 1 phát sinh đã ghi sổ (chỉ thêm, không sửa / xóa). "Tồn sau" là số dư của kho × lô ngay sau phát sinh đó.' ?></span>
+                            : 'Mỗi dòng là 1 phát sinh đã ghi sổ (chỉ thêm, không sửa / xóa). "Tồn sau" là số dư của kho + lô ngay sau phát sinh đó.' ?></span>
                     <a class="btn btn-export" href="<?= e($exportUrl) ?>"><i class="fas fa-file-export"></i> Xuất Excel</a>
                 </div>
                 <div class="toolbar-bottom">
