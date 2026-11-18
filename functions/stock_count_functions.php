@@ -94,7 +94,7 @@ function getStockCount(PDO $pdo, int $countId): ?array
 function getStockCountLines(PDO $pdo, int $countId): array
 {
     $stmt = $pdo->prepare("
-        SELECT l.id, l.item_id, l.batch_id, l.system_qty, l.counted_qty, l.difference, l.reason, l.counted_at,
+        SELECT l.id, l.item_id, l.batch_id, l.system_qty, l.counted_qty, l.difference, l.reason, l.counted_by, l.counted_at,
                i.sku, i.name AS item_name, i.unit, b.batch_no, b.expiry_date,
                u.full_name AS counted_by_name, " . claimSelectSql() . "
         FROM stock_count_lines l
@@ -201,8 +201,8 @@ function createStockCount(PDO $pdo, array $user, int $warehouseId, string $note,
 }
 
 /**
- * Lưu số đếm thực tế. Nhiều nhân viên cùng đếm 1 đợt: dòng nào đã có người lưu số đếm thì KHÓA,
- * không ai ghi đè được nữa (kể cả người đã đếm) - muốn đếm lại thì quản lý kho mở khóa dòng đó.
+ * Lưu số đếm thực tế. Nhiều nhân viên cùng đếm 1 đợt: dòng nào đã có người lưu số đếm thì KHÓA với người khác,
+ * không ai ghi đè được; chỉ chính người đã nhập sửa lại được (khi đợt còn mở). Quản lý kho mở khóa dòng để người khác đếm lại.
  * $entries = [line_id => ['counted_qty' => '12' | '', 'reason' => '...'], ...]; để trống = chưa đếm (bỏ qua).
  * Dòng lệch phải có lý do ngay khi lưu (vì lưu xong là khóa, không bổ sung sau được).
  * Trả về ['saved' => số dòng đã ghi, 'conflicts' => [thông báo dòng đã bị người khác nhập trước]].
@@ -221,7 +221,7 @@ function saveStockCountEntries(PDO $pdo, array $user, int $countId, array $entri
         }
 
         $stmt = $pdo->prepare('
-            SELECT l.id, l.system_qty, l.counted_qty, i.sku, b.batch_no, u.full_name AS counted_by_name, ' . claimSelectSql() . '
+            SELECT l.id, l.system_qty, l.counted_qty, l.reason, l.counted_by, i.sku, b.batch_no, u.full_name AS counted_by_name, ' . claimSelectSql() . '
             FROM stock_count_lines l
             JOIN items i   ON i.id = l.item_id
             JOIN batches b ON b.id = l.batch_id
@@ -236,7 +236,7 @@ function saveStockCountEntries(PDO $pdo, array $user, int $countId, array $entri
         }
 
         $update    = $pdo->prepare('UPDATE stock_count_lines SET counted_qty = ?, reason = ?, counted_by = ?, counted_at = NOW(), claimed_by = NULL, claimed_at = NULL
-                                    WHERE id = ? AND counted_qty IS NULL');
+                                    WHERE id = ? AND (counted_qty IS NULL OR counted_by = ?)');
         $toSave    = [];
         $conflicts = [];
         foreach ($entries as $lineId => $entry) {
@@ -258,12 +258,20 @@ function saveStockCountEntries(PDO $pdo, array $user, int $countId, array $entri
                 throw new VoucherException('Lý do chênh lệch tối đa 255 ký tự.');
             }
             if ($line['counted_qty'] !== null) {
-                // Đã khóa: gửi lại đúng số cũ (trang chưa tải lại) thì bỏ qua, khác thì báo không ghi đè
-                if (toMilli($line['counted_qty']) !== toMilli($qty)) {
-                    $conflicts[] = "$name đã được {$line['counted_by_name']} nhập " . formatQty($line['counted_qty'])
-                                 . ', số bạn nhập (' . formatQty($qty) . ') không được ghi.';
+                $unchanged = toMilli($line['counted_qty']) === toMilli($qty);
+                if ((int) $line['counted_by'] === (int) $user['id']) {
+                    // Dòng của chính mình: sửa được; gửi lại y nguyên (số + lý do) thì bỏ qua
+                    if ($unchanged && trim((string) $line['reason']) === $reason) {
+                        continue;
+                    }
+                } else {
+                    // Dòng người khác đã nhập: gửi lại đúng số cũ (trang chưa tải lại) thì bỏ qua, khác thì báo không ghi đè
+                    if (!$unchanged) {
+                        $conflicts[] = "$name đã được {$line['counted_by_name']} nhập " . formatQty($line['counted_qty'])
+                                     . ', số bạn nhập (' . formatQty($qty) . ') không được ghi.';
+                    }
+                    continue;
                 }
-                continue;
             }
             if ($line['claimer_id'] !== null && (int) $line['claimer_id'] !== (int) $user['id']) {
                 // Người khác gõ dòng này trước (đang giữ): không ghi số của mình
@@ -273,7 +281,7 @@ function saveStockCountEntries(PDO $pdo, array $user, int $countId, array $entri
             if (toMilli($qty) !== toMilli($line['system_qty']) && $reason === '') {
                 throw new VoucherException("$name lệch so với tồn hệ thống: phải nhập lý do chênh lệch trước khi lưu (lưu xong dòng sẽ bị khóa).");
             }
-            $toSave[] = [$qty, $reason === '' ? null : $reason, $user['id'], $lineId];
+            $toSave[] = [$qty, $reason === '' ? null : $reason, $user['id'], $lineId, $user['id']];
         }
 
         foreach ($toSave as $params) {
@@ -423,13 +431,13 @@ function claimStockCountLine(PDO $pdo, array $user, int $countId, int $lineId): 
     assertCanEnterStockCount($pdo, $user, $countId);
     $stmt = $pdo->prepare('
         UPDATE stock_count_lines SET claimed_by = ?, claimed_at = NOW()
-        WHERE id = ? AND count_id = ? AND counted_qty IS NULL
+        WHERE id = ? AND count_id = ? AND (counted_qty IS NULL OR counted_by = ?)
           AND (claimed_by IS NULL OR claimed_by = ? OR claimed_at < NOW() - INTERVAL ' . STOCK_COUNT_CLAIM_SECONDS . ' SECOND)
     ');
-    $stmt->execute([$user['id'], $lineId, $countId, $user['id']]);
+    $stmt->execute([$user['id'], $lineId, $countId, $user['id'], $user['id']]);
 
     $stmt = $pdo->prepare('
-        SELECT l.counted_qty, l.claimed_by, u.full_name AS counted_by_name, cu.full_name AS claimer_name
+        SELECT l.counted_qty, l.counted_by, l.claimed_by, u.full_name AS counted_by_name, cu.full_name AS claimer_name
         FROM stock_count_lines l
         LEFT JOIN users u  ON u.id = l.counted_by
         LEFT JOIN users cu ON cu.id = l.claimed_by
@@ -440,7 +448,7 @@ function claimStockCountLine(PDO $pdo, array $user, int $countId, int $lineId): 
     if (!$line) {
         throw new VoucherException('Dòng kiểm kê không thuộc đợt này.');
     }
-    if ($line['counted_qty'] !== null) {
+    if ($line['counted_qty'] !== null && (int) $line['counted_by'] !== (int) $user['id']) {
         return ['ok' => false, 'message' => "Dòng này đã được {$line['counted_by_name']} nhập " . formatQty($line['counted_qty']) . '.'];
     }
     if ((int) $line['claimed_by'] !== (int) $user['id']) {
@@ -449,7 +457,7 @@ function claimStockCountLine(PDO $pdo, array $user, int $countId, int $lineId): 
     return ['ok' => true, 'message' => ''];
 }
 
-/** Nhả các dòng mình đang giữ mà chưa lưu (xóa số đã gõ, rời trang) */
+/** Nhả các dòng mình đang giữ mà chưa lưu (xóa số đã gõ, rời trang, sửa xong không đổi gì) */
 function releaseStockCountLines(PDO $pdo, array $user, int $countId, array $lineIds): void
 {
     $lineIds = array_values(array_filter(array_map('intval', $lineIds)));
@@ -459,7 +467,7 @@ function releaseStockCountLines(PDO $pdo, array $user, int $countId, array $line
     $placeholders = implode(',', array_fill(0, count($lineIds), '?'));
     $stmt = $pdo->prepare("
         UPDATE stock_count_lines SET claimed_by = NULL, claimed_at = NULL
-        WHERE count_id = ? AND claimed_by = ? AND counted_qty IS NULL AND id IN ($placeholders)
+        WHERE count_id = ? AND claimed_by = ? AND id IN ($placeholders)
     ");
     $stmt->execute(array_merge([$countId, $user['id']], $lineIds));
 }
@@ -538,12 +546,13 @@ function unlockStockCountLine(PDO $pdo, array $user, int $countId, int $lineId):
 
 /**
  * Trạng thái các dòng (cho trang chi tiết tự cập nhật dòng người khác vừa khóa / đang nhập): [line_id => {...}]
- * claim = tên người đang gõ dòng đó (còn hạn giữ), mine = chính người đang xem giữ dòng.
+ * claim = tên người đang gõ dòng đó (còn hạn giữ), mine = chính người đang xem giữ dòng,
+ * own = dòng do chính người đang xem nhập (sửa được), raw = số đếm dạng thô để điền lại vào ô nhập.
  */
 function getStockCountLineStates(PDO $pdo, int $countId, int $viewerId = 0): array
 {
     $stmt = $pdo->prepare('
-        SELECT l.id, l.counted_qty, l.difference, l.reason, l.counted_at, u.full_name AS counted_by_name, ' . claimSelectSql() . '
+        SELECT l.id, l.counted_qty, l.difference, l.reason, l.counted_by, l.counted_at, u.full_name AS counted_by_name, ' . claimSelectSql() . '
         FROM stock_count_lines l
         LEFT JOIN users u  ON u.id = l.counted_by
         LEFT JOIN users cu ON cu.id = l.claimed_by
@@ -555,6 +564,8 @@ function getStockCountLineStates(PDO $pdo, int $countId, int $viewerId = 0): arr
         $states[(int) $row['id']] = [
             'counted'  => $row['counted_qty'] !== null,
             'qty'      => $row['counted_qty'] !== null ? formatQty($row['counted_qty']) : null,
+            'raw'      => $row['counted_qty'] !== null ? plainQty($row['counted_qty']) : null,
+            'own'      => $row['counted_qty'] !== null && $viewerId > 0 && (int) $row['counted_by'] === $viewerId,
             'diff'     => $row['counted_qty'] !== null ? diffLabel($row['difference']) : null,
             'mismatch' => $row['counted_qty'] !== null && toMilli($row['difference']) !== 0,
             'reason'   => $row['reason'],

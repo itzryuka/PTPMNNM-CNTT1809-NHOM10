@@ -34,7 +34,8 @@ document.querySelectorAll('.js-member-grid').forEach(grid => {
 
 
 // Trang chi tiết: gõ số vào dòng nào thì GIỮ dòng đó cho mình ngay (người khác thấy tên và không nhập được),
-// chuyển sang dòng khác / Enter thì tự lưu và khóa. Server là chốt chặn cuối cho mọi bước (giữ dòng, lưu, khóa).
+// chuyển sang dòng khác / Enter thì tự lưu. Dòng đã lưu khóa với người khác nhưng chính người nhập vẫn sửa được
+// (dòng .row-saved, số đã lưu ở data-saved-*). Server là chốt chặn cuối cho mọi bước (giữ dòng, lưu, khóa).
 (function () {
     const form = document.getElementById('countForm');
     if (!form) return;
@@ -54,6 +55,10 @@ document.querySelectorAll('.js-member-grid').forEach(grid => {
 
     const qtyInput = row => row.querySelector('.js-counted');
     const reasonInput = row => row.querySelector('.js-reason');
+    const isOwnSaved = row => (row.dataset.savedQty ?? '') !== '';
+    // Số / lý do trên ô khác với số đã lưu (dòng mới: khác rỗng)?
+    const isDirty = row => qtyInput(row).value !== (row.dataset.savedQty ?? '')
+        || reasonInput(row).value.trim() !== (row.dataset.savedReason ?? '').trim();
 
     function formatQty(qty) {
         return Math.abs(qty).toLocaleString('vi-VN', { maximumFractionDigits: 3 });
@@ -67,11 +72,11 @@ document.querySelectorAll('.js-member-grid').forEach(grid => {
         if (hint) hint.textContent = text;
     }
 
-    // Còn dòng đã gõ số mà chưa lưu được (vd. thiếu lý do chênh lệch)?
+    // Còn dòng đã gõ / sửa mà chưa lưu được (vd. thiếu lý do chênh lệch)?
     function hasUnsaved() {
         return rows.some(row => {
             const input = qtyInput(row);
-            return input && !input.disabled && input.value !== '';
+            return input && !input.disabled && isDirty(row);
         });
     }
 
@@ -128,8 +133,28 @@ document.querySelectorAll('.js-member-grid').forEach(grid => {
         if (error) row.querySelector('.js-counter').append(error);
     }
 
+    // Dòng mình đã lưu: hiện tên + giờ, ô nhập vẫn mở để sửa
+    function showSaved(row) {
+        row.classList.add('row-saved');
+        row.classList.remove('row-mine', 'row-claimed', 'row-conflict');
+        setCounter(row, `<span class="count-by count-own"><i class="fas fa-check-circle"></i> <strong>${escapeHtml(row.dataset.savedBy)}</strong></span>
+            <span class="muted">${escapeHtml(row.dataset.savedAt)} · sửa được</span>`);
+    }
+
+    // Đưa ô nhập về đúng số đã lưu (bỏ phần đang sửa dở)
+    function restoreSaved(row) {
+        qtyInput(row).value = row.dataset.savedQty;
+        reasonInput(row).value = row.dataset.savedReason ?? '';
+        refresh(row);
+        showSaved(row);
+    }
+
     function showIdle(row) {
-        row.classList.remove('row-mine', 'row-claimed');
+        if (isOwnSaved(row)) {
+            showSaved(row);
+            return;
+        }
+        row.classList.remove('row-mine', 'row-claimed', 'row-saved');
         row.querySelectorAll('input').forEach(input => { input.disabled = false; });
         const input = qtyInput(row);
         if (input) input.placeholder = 'Chưa đếm';
@@ -161,7 +186,7 @@ document.querySelectorAll('.js-member-grid').forEach(grid => {
                 data-confirm="${escapeHtml(`Mở khóa dòng ${name}? Số đếm của ${state.by} bị xóa để đếm lại.`)}"><i class="fas fa-lock-open icon-edit"></i></button>`;
         }
         setCounter(row, counter);
-        row.classList.remove('has-diff', 'row-conflict', 'row-mine', 'row-claimed');
+        row.classList.remove('has-diff', 'row-conflict', 'row-mine', 'row-claimed', 'row-saved');
         row.classList.add('row-locked');
     }
 
@@ -176,6 +201,26 @@ document.querySelectorAll('.js-member-grid').forEach(grid => {
             if (state.mismatch) mismatched++;
             const input = qtyInput(row);
             const locked = row.classList.contains('row-locked');
+            const line = row.dataset.line;
+
+            if (state.counted && state.own && input) {
+                // Dòng của mình: cập nhật số đã lưu; đang sửa dở thì giữ nguyên chữ đang gõ
+                const editing = mine.has(line) || claiming.has(line) || row.dataset.saving || isDirty(row);
+                row.dataset.savedQty = state.raw;
+                row.dataset.savedReason = state.reason ?? '';
+                row.dataset.savedBy = state.by;
+                row.dataset.savedAt = state.at;
+                if (!editing) restoreSaved(row);
+                return;
+            }
+            if (!state.counted && isOwnSaved(row)) {
+                // Quản lý vừa mở khóa dòng mình đã nhập: về dòng chưa đếm
+                ['savedQty', 'savedReason', 'savedBy', 'savedAt'].forEach(key => delete row.dataset[key]);
+                if (!mine.has(line)) {
+                    clearInputs(row);
+                    showIdle(row);
+                }
+            }
 
             if (state.counted) {
                 if (locked) return;
@@ -235,7 +280,7 @@ document.querySelectorAll('.js-member-grid').forEach(grid => {
             }
             mine.delete(line);
             if (data.lines) {
-                clearInputs(row);
+                if (isOwnSaved(row)) restoreSaved(row); else clearInputs(row);
                 applyStates(data.lines);                     // khóa dòng (đã có người lưu) hoặc hiện tên người đang giữ
             }
             showRowError(row, data.message || 'Không giữ được dòng này.');
@@ -250,7 +295,7 @@ document.querySelectorAll('.js-member-grid').forEach(grid => {
         const line = row.dataset.line;
         if (!mine.has(line)) return;
         mine.delete(line);
-        showIdle(row);
+        showIdle(row);                                       // dòng mình đã lưu: về trạng thái "đã lưu, sửa được"
         post('release_line', { line_id: line });
     }
 
@@ -259,7 +304,20 @@ document.querySelectorAll('.js-member-grid').forEach(grid => {
         const input = qtyInput(row);
         const reason = reasonInput(row);
         if (!input || input.disabled || row.dataset.saving) return false;
+        if (!isDirty(row)) {
+            release(row);                                    // không đổi gì: khỏi lưu
+            if (isOwnSaved(row)) return true;
+            if (fromEnter) showRowError(row, 'Nhập số đếm thực tế trước.');
+            return false;
+        }
         if (input.value === '') {
+            if (isOwnSaved(row)) {
+                // Xóa trắng dòng đã lưu: không xóa số trên server, trả lại số cũ
+                release(row);
+                restoreSaved(row);
+                showRowError(row, 'Không để trống được dòng đã nhập: sửa thành số đếm đúng.');
+                return false;
+            }
             release(row);
             if (fromEnter) showRowError(row, 'Nhập số đếm thực tế trước.');
             return false;
@@ -276,17 +334,25 @@ document.querySelectorAll('.js-member-grid').forEach(grid => {
         input.readOnly = reason.readOnly = true;
         setCounter(row, '<span class="muted"><i class="fas fa-spinner fa-spin"></i> Đang lưu…</span>');
         const data = await post('save_line', { line_id: line, counted_qty: input.value, reason: reason.value });
-        if (data.lines) {
-            // Đã lưu (của mình, hoặc người khác nhập trước): bỏ số đang gõ để applyStates hiện theo số trên server
-            input.value = '';
-            applyStates(data.lines);
-        }
         delete row.dataset.saving;
-        if (row.classList.contains('row-locked')) {
-            setHint(data.ok ? 'Đã lưu và khóa dòng.' : data.message);
+        input.readOnly = reason.readOnly = false;
+        if (data.ok) {
+            // Lưu xong: số trên ô thành "số đã lưu", applyStates đồng bộ lại theo server (tên, giờ, chênh lệch)
+            mine.delete(line);
+            row.dataset.savedQty = input.value;
+            row.dataset.savedReason = reason.value.trim();
+            applyStates(data.lines);
+            setHint('Đã lưu. Dòng mang tên bạn: người khác không sửa được, bạn vẫn sửa lại được.');
             return true;
         }
-        input.readOnly = reason.readOnly = false;
+        if (data.lines) {
+            // Người khác đã nhập / đang giữ dòng này trước: bỏ số mình gõ, hiện theo server
+            mine.delete(line);
+            if (isOwnSaved(row)) restoreSaved(row); else clearInputs(row);
+            applyStates(data.lines);
+            showRowError(row, data.message);
+            return false;
+        }
         if (mine.has(line)) showMine(row);
         showRowError(row, data.message || 'Có lỗi xảy ra.');
         return false;
@@ -295,7 +361,7 @@ document.querySelectorAll('.js-member-grid').forEach(grid => {
     // Bấm Enter lưu xong: nhảy tới ô nhập của dòng còn trống kế tiếp cho nhập liên tục
     function focusNext(row) {
         let next = row.nextElementSibling;
-        while (next && !(qtyInput(next) && !qtyInput(next).disabled)) next = next.nextElementSibling;
+        while (next && !(qtyInput(next) && !qtyInput(next).disabled && qtyInput(next).value === '')) next = next.nextElementSibling;
         next && qtyInput(next).focus();
     }
 
@@ -306,8 +372,7 @@ document.querySelectorAll('.js-member-grid').forEach(grid => {
                 refresh(row);
                 row.querySelector('.count-conflict')?.remove();
                 row.classList.remove('row-conflict');
-                const typed = qtyInput(row).value !== '' || reasonInput(row).value !== '';
-                if (typed && !mine.has(row.dataset.line)) claim(row);
+                if (isDirty(row) && !mine.has(row.dataset.line)) claim(row);
             });
             input.addEventListener('keydown', async event => {
                 if (event.key !== 'Enter' || event.isComposing) return;
@@ -335,8 +400,7 @@ document.querySelectorAll('.js-member-grid').forEach(grid => {
         mine.forEach(line => {
             const row = form.querySelector(`.js-count-row[data-line="${line}"]`);
             if (!row || row.dataset.saving) return;
-            const typed = qtyInput(row).value !== '' || reasonInput(row).value !== '';
-            if (typed || row.contains(document.activeElement)) {
+            if (isDirty(row) || row.contains(document.activeElement)) {
                 post('claim_line', { line_id: line }).then(data => {
                     if (!data.ok && data.lines) applyStates(data.lines);
                 });
@@ -384,7 +448,7 @@ document.querySelectorAll('.js-member-grid').forEach(grid => {
         decision.addEventListener('submit', event => {
             if (!hasUnsaved()) return;
             event.preventDefault();
-            appDialog({ alert: true, title: 'Còn số đếm chưa lưu', message: 'Có dòng đã gõ số nhưng chưa lưu được (thường do thiếu lý do chênh lệch). Hoàn tất hoặc xóa số đó trước khi chốt đợt.' });
+            appDialog({ alert: true, title: 'Còn số đếm chưa lưu', message: 'Có dòng đã gõ / sửa số nhưng chưa lưu được (thường do thiếu lý do chênh lệch). Hoàn tất hoặc bỏ phần sửa đó trước khi chốt đợt.' });
         });
     });
 

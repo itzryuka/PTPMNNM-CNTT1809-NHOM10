@@ -513,8 +513,16 @@ try {
         count($saved['conflicts']) === 1 && str_contains($saved['conflicts'][0], 'không được ghi') && $saved['saved'] === count($managerPart)
         && (float) scalar('SELECT counted_qty FROM stock_count_lines WHERE id = ?', [$moveLineId]) == (float) $entries[$moveLineId]['counted_qty']
         && (int) scalar('SELECT counted_by FROM stock_count_lines WHERE id = ?', [$moveLineId]) === (int) $staffC['id']);
-    check('Người đã đếm cũng không tự sửa được dòng đã khóa',
-        count(saveStockCountEntries($pdo, $staffC, $countId, [$moveLineId => ['counted_qty' => '1', 'reason' => 'x']])['conflicts']) === 1);
+    $edit = saveStockCountEntries($pdo, $staffC, $countId, [$moveLineId => ['counted_qty' => '1', 'reason' => 'Sửa thử']]);
+    check('Người đã nhập tự sửa lại được dòng của mình (đợt còn mở)', $edit === ['saved' => 1, 'conflicts' => []]
+        && (float) scalar('SELECT counted_qty FROM stock_count_lines WHERE id = ?', [$moveLineId]) == 1.0
+        && (int) scalar('SELECT counted_by FROM stock_count_lines WHERE id = ?', [$moveLineId]) === (int) $staffC['id']);
+    check('Sửa dòng của mình: lệch thì vẫn bắt buộc lý do',
+        str_contains(errorOf(fn () => saveStockCountEntries($pdo, $staffC, $countId, [$moveLineId => ['counted_qty' => '2', 'reason' => '']])), 'phải nhập lý do'));
+    saveStockCountEntries($pdo, $staffC, $countId, [$moveLineId => $entries[$moveLineId]]);   // trả về số đếm đúng
+    check('Người khác vẫn không sửa được dòng đó',
+        count(saveStockCountEntries($pdo, $manager, $countId, [$moveLineId => ['counted_qty' => '5', 'reason' => 'x']])['conflicts']) === 1
+        && (float) scalar('SELECT counted_qty FROM stock_count_lines WHERE id = ?', [$moveLineId]) == (float) $entries[$moveLineId]['counted_qty']);
     check('Gửi lại đúng số đã lưu (trang chưa tải lại) thì không báo trùng',
         saveStockCountEntries($pdo, $staffC, $countId, $staffPart) === ['saved' => 0, 'conflicts' => []]);
     $diffs = $pdo->prepare('SELECT batch_id, difference FROM stock_count_lines WHERE count_id = ? AND difference <> 0 ORDER BY batch_id');
@@ -525,6 +533,9 @@ try {
     $states = getStockCountLineStates($pdo, $countId);
     check('Trạng thái dòng cho trang tự cập nhật: đã khóa, người đếm, có lệch',
         $states[$moveLineId]['counted'] && $states[$moveLineId]['mismatch'] && $states[$moveLineId]['by'] === $staffC['full_name']);
+    check('Trạng thái dòng biết dòng nào là của người đang xem (sửa được)',
+        getStockCountLineStates($pdo, $countId, (int) $staffC['id'])[$moveLineId]['own'] === true && $states[$moveLineId]['own'] === false
+        && getStockCountLineStates($pdo, $countId, (int) $staffC['id'])[$moveLineId]['raw'] === plainQty($entries[$moveLineId]['counted_qty']));
 
     // Mở khóa dòng nhập nhầm: chỉ quản lý kho
     check('Nhân viên không mở khóa được dòng đã đếm', str_contains(errorOf(fn () => unlockStockCountLine($pdo, $staffC, $countId, (int) $plusLine['id'])), 'Chỉ quản lý'));
@@ -616,7 +627,10 @@ try {
     check('Người đang giữ lưu được: dòng khóa, hết giữ', saveStockCountEntries($pdo, $staffB, $cleanId, $claimEntry)['saved'] === 1
         && scalar('SELECT claimed_by FROM stock_count_lines WHERE id = ?', [$claimLine]) === null);
     $late = claimStockCountLine($pdo, $manager, $cleanId, $claimLine);
-    check('Dòng đã lưu thì không giữ được nữa, báo ai đã nhập', !$late['ok'] && str_contains($late['message'], 'đã được'));
+    check('Dòng người khác đã lưu thì không giữ được, báo ai đã nhập', !$late['ok'] && str_contains($late['message'], 'đã được'));
+    check('Người đã nhập giữ lại được dòng của mình để sửa', claimStockCountLine($pdo, $staffB, $cleanId, $claimLine)['ok'] === true);
+    releaseStockCountLines($pdo, $staffB, $cleanId, [$claimLine]);
+    check('Sửa xong không đổi gì thì nhả được dòng', scalar('SELECT claimed_by FROM stock_count_lines WHERE id = ?', [$claimLine]) === null);
 
     check('Quản lý kho không cần có tên trong đợt vẫn đếm được', saveStockCountEntries($pdo, $manager, $cleanId, $cleanEntries)['saved'] === count($cleanEntries) - 2);
     check('Quản lý nhập giúp thì tự có tên trong danh sách người đếm', in_array((int) $manager['id'], getStockCountMemberIds($pdo, $cleanId), true));
